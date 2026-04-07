@@ -1,24 +1,26 @@
 # shitfetch
 
-minimalist, linux-only fetch in C.
+minimal linux fetch
 
-the point is simple code, fast startup, and enough config to not be annoying.
+`shitfetch` is a Linux-only fetch utility written in C.
+
+The goal is to stay tiny and readable, while still being configurable enough
+for day-to-day use.
 
 ## What It Is
 
-- linux-only (`musl` + `glibc`)
-- pure C (`C11`)
-- KDL config via `ckdl`
 - fetch binary: `shitfetch`
 - alias binary: `sf`
+- runtime data collection in C
+- KDL-based config (`config.kdl`)
 
 ## Dependencies
 
-- build:
+- build-time:
   - C compiler
   - `make`
   - `ckdl` headers (`kdl/parser.h`, etc.)
-- link/runtime:
+- runtime:
   - `libkdl.so`
 
 ## Build
@@ -33,108 +35,99 @@ make
 ./shitfetch
 ./shitfetch --logo arch
 ./shitfetch --logo none
-./shitfetch --conf-gen
+./shitfetch --config ./config.kdl
 ```
 
-## Install
+Install/uninstall:
 
 ```sh
 make install PREFIX=/usr/local
+make uninstall PREFIX=/usr/local
 ```
 
-Installs:
+Install places:
 
 - `/usr/local/bin/shitfetch`
 - `/usr/local/bin/sf` (symlink)
-- `/etc/shitfetch/config.kdl` (only if not already present)
+- `/etc/shitfetch/config.kdl` (if not already present)
 
-## Config (KDL 2.0.0)
+## Configuration
 
-Read order:
+Config load order:
 
 1. `/etc/shitfetch/config.kdl`
 2. `$XDG_CONFIG_HOME/shitfetch/config.kdl` (fallback: `~/.config/shitfetch/config.kdl`)
 
-User config has priority.
+User config overrides system config.
 
-Only block-style KDL is supported.
-
-### Supported Nodes
+Top-level nodes:
 
 - `logo "auto" | "none" | "<name>"`
 - `header true|false`
 - `ansi true|false`
-- `separator "<text>"` (global key/value separator)
-- `colors { ... }`:
-  - `key "<color>"`
-  - `value "<color>"`
-  - `header "<color>"`
-  - `border "<color>"`
-  - `custom "<color>"`
-  - `logo "<color>"`
-- `modules { ... }` mixed list entries:
-  - `<module> [enabled=<bool>] [key="<text>"] [key-color=<int|string>] [format="<text>"]`
-  - `break`
-  - `separator "<text>"`
-  - `custom "<text>"` or `custom format="<text>"`
-  - `colors`
+- `separator "<text>"`
+- `colors { ... }`
+- `modules { ... }`
 
-Supported module names:
+`colors` keys:
 
-- `os`
-- `kernel`
-- `uptime`
-- `init`
-- `packages`
-- `shell`
-- `display`
-- `dewm`
-- `term`
-- `cpu`
-- `gpu`
-- `memory`
-- `swap`
-- `disk`
-- `host`
+- `key`
+- `value`
+- `header`
+- `border`
+- `custom`
+- `logo`
+
+Supported modules:
+
+- `os`, `kernel`, `uptime`, `init`, `packages`, `shell`, `display`, `dewm`, `term`, `cpu`, `gpu`, `memory`, `swap`, `disk`, `host`
+
+Module properties:
+
+- `enabled=<bool>`
+- `key="<text>"`
+- `key-color="<color>"` / `keycolor="<color>"`
+- `format="...{}..."`
+
+Special `modules` entries:
+
+- `break`
+- `separator "<text>"`
+- `custom "<text>"`
+- `colors`
 
 `custom` placeholders:
 
 - `{user}`, `{host}`
-- `{os}`, `{kernel}`, `{init}`, `{wm}` / `{dewm}`, `{term}`
-- `{osid}` / `{os-id}`
-- modifiers: `:lower` and fixed width `:<n>`; combine as `{term:lower:18}`
+- `{os}`, `{osid}`
+- `{kernel}`, `{init}`, `{dewm}`, `{term}`
 
-Module options:
+Disk options:
 
-- every module:
-  - `enabled=<bool>`
-  - `key="<text>"`
-  - `key-color="<color>"` or `keycolor="<color>"`
-  - `format="..."` with `{}` as module value placeholder
-- disk module:
-  - `all=<bool>`: show all real mounted filesystems (`true` by default)
-  - `show-fs=<bool>`: append fs type (`true` by default)
-  - string args as mount filters (exact mountpoints), for example `disk all=false "/" "/run/media/user/USB"`
+- `all=<bool>` (default `true`)
+- `show-fs=<bool>` (default `true`)
+- string args as exact mount filters when `all=false`
 
-### Minimal Example
+Color format:
+
+- ANSI codes (`36`, `38;5;208`, `38;2;R;G;B`)
+- named colors (`red`, `cyan`, `light-gray`, `bright-blue`, ...)
+- hex (`#RRGGBB`)
+- `logo` for the detected main logo accent color
+
+Minimal config:
 
 ```kdl
 logo "auto"
 ansi true
-separator ": "
 colors {
   key "logo"
-  value "light-white"
-  header "logo"
-  border "light-gray"
-  custom "orange"
+  value 39
 }
 modules {
-  os key="OS"
-  kernel format="v{}"
+  os
+  kernel
   uptime
-  break
-  separator "----"
   packages
   shell
   display
@@ -148,53 +141,20 @@ modules {
 }
 ```
 
-Color format:
-
-- names: `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `white`, `black`
-- light/bright variants: `light-gray`, `light-red`, `bright-cyan`, etc.
-- extra names: `orange`, `pink`, `purple`
-- special: `logo` (use main logo color)
-- optional advanced: `#RRGGBB`
-
-### Full Example
-
-See [`config.full.kdl`](./config.full.kdl).
-
-Example module customization:
-
-```kdl
-modules {
-  shell key="SH"
-  memory key="RAM"
-  disk key="Disk"
-  host enabled=false
-  break
-  custom "-----"
-  colors
-}
-```
-
-Example disk customization:
-
-```kdl
-modules {
-  disk key="Disk" all=true show-fs=true
-}
-```
-
-Only selected mountpoints:
-
-```kdl
-modules {
-  disk key="Disk" all=false "/" "/run/media/pdlayer/MYUSB"
-}
-```
-
 ## CLI
 
 - `-h`, `--help`
 - `-v`, `--version`
 - `-g`, `--conf-gen`
-- `-c <path>`, `--config <path>`, `--config=<path>`
-- `-l`, `--logo NAME`
-- `--logo=NAME`
+- `-c`, `--config <path>`
+- `-l`, `--logo <name>`
+
+## Notes
+
+- Linux-only project.
+- Intended to stay small and easy to hack.
+- Defaults aim for accent-colored keys and neutral values.
+
+## License
+
+ISC, see [LICENSE](./LICENSE).

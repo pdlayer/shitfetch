@@ -14,6 +14,7 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include <fcntl.h>
+#include <time.h>
 #include <unistd.h>
 
 static void
@@ -32,35 +33,34 @@ read_first_line(const char *path, char *out, size_t cap)
 }
 
 static int
-read_ppid(pid_t pid)
+read_proc_stat(pid_t pid, char *comm, size_t comm_cap, pid_t *ppid_out)
 {
 	char path[64];
 	FILE *fp;
 	int parsed_pid;
-	char comm[256];
+	char comm_buf[256];
 	char state;
 	int ppid;
+
+	if (comm != NULL && comm_cap > 0)
+		comm[0] = '\0';
+	if (ppid_out != NULL)
+		*ppid_out = -1;
 
 	snprintf(path, sizeof(path), "/proc/%d/stat", (int)pid);
 	fp = fopen(path, "r");
 	if (fp == NULL)
 		return -1;
-	if (fscanf(fp, "%d (%255[^)]) %c %d", &parsed_pid, comm, &state, &ppid) != 4) {
+	if (fscanf(fp, "%d (%255[^)]) %c %d", &parsed_pid, comm_buf, &state, &ppid) != 4) {
 		fclose(fp);
 		return -1;
 	}
 	fclose(fp);
-	return ppid;
-}
-
-static bool
-read_comm(pid_t pid, char *out, size_t cap)
-{
-	char path[64];
-
-	snprintf(path, sizeof(path), "/proc/%d/comm", (int)pid);
-	read_first_line(path, out, cap);
-	return out[0] != '\0';
+	if (comm != NULL && comm_cap > 0)
+		snprintf(comm, comm_cap, "%s", comm_buf);
+	if (ppid_out != NULL)
+		*ppid_out = (pid_t)ppid;
+	return 0;
 }
 
 static bool
@@ -79,56 +79,88 @@ is_wrapper_name(const char *s)
 }
 
 static void
-read_os_release(char *id, size_t id_cap, char *pretty, size_t pretty_cap)
+read_os_release_fields(const char *path, char *id, size_t id_cap, char *name, size_t name_cap,
+	char *version_id, size_t version_id_cap)
 {
 	FILE *fp;
 	char line[512];
-	char bedrock[128];
+
+	if (id_cap > 0)
+		id[0] = '\0';
+	if (name_cap > 0)
+		name[0] = '\0';
+	if (version_id_cap > 0)
+		version_id[0] = '\0';
+	fp = fopen(path, "r");
+	if (fp == NULL)
+		return;
+
+	while (fgets(line, sizeof(line), fp) != NULL) {
+		char *eq;
+		char *key;
+		char *value;
+		size_t len;
+
+		shitfetch_trim(line);
+		if (line[0] == '\0' || line[0] == '#')
+			continue;
+
+		eq = strchr(line, '=');
+		if (eq == NULL)
+			continue;
+		*eq = '\0';
+		key = line;
+		value = eq + 1;
+		len = strlen(value);
+		if (len >= 2 && value[0] == '"' && value[len - 1] == '"') {
+			value[len - 1] = '\0';
+			value++;
+		}
+
+		if (strcmp(key, "ID") == 0)
+			snprintf(id, id_cap, "%s", value);
+		else if (strcmp(key, "NAME") == 0)
+			snprintf(name, name_cap, "%s", value);
+		else if (strcmp(key, "VERSION_ID") == 0)
+			snprintf(version_id, version_id_cap, "%s", value);
+	}
+	fclose(fp);
+}
+
+static void
+read_os_release(char *id, size_t id_cap, char *pretty, size_t pretty_cap)
+{
+	char name[128];
+	char version_id[64];
+	char bedrock_id[64];
+	char bedrock_name[128];
+	char bedrock_version_id[64];
 
 	id[0] = '\0';
 	pretty[0] = '\0';
-	fp = fopen("/etc/os-release", "r");
-	if (fp != NULL) {
-		while (fgets(line, sizeof(line), fp) != NULL) {
-			char *eq;
-			char *key;
-			char *value;
-			size_t len;
-
-			shitfetch_trim(line);
-			if (line[0] == '\0' || line[0] == '#')
-				continue;
-
-			eq = strchr(line, '=');
-			if (eq == NULL)
-				continue;
-			*eq = '\0';
-			key = line;
-			value = eq + 1;
-			len = strlen(value);
-			if (len >= 2 && value[0] == '"' && value[len - 1] == '"') {
-				value[len - 1] = '\0';
-				value++;
-			}
-
-			if (strcmp(key, "ID") == 0)
-				snprintf(id, id_cap, "%s", value);
-			if (strcmp(key, "PRETTY_NAME") == 0)
-				snprintf(pretty, pretty_cap, "%s", value);
-		}
-		fclose(fp);
-	}
+	name[0] = '\0';
+	version_id[0] = '\0';
+	read_os_release_fields("/etc/os-release", id, id_cap, name, sizeof(name), version_id, sizeof(version_id));
 
 	if (shitfetch_file_exists("/bedrock/etc/bedrock-release")) {
-		read_first_line("/bedrock/etc/bedrock-release", bedrock, sizeof(bedrock));
+		read_os_release_fields("/bedrock/etc/os-release",
+			bedrock_id, sizeof(bedrock_id),
+			bedrock_name, sizeof(bedrock_name),
+			bedrock_version_id, sizeof(bedrock_version_id));
 		snprintf(id, id_cap, "bedrock");
-		if (bedrock[0] != '\0')
-			snprintf(pretty, pretty_cap, "Bedrock Linux (%s)", bedrock);
+		if (bedrock_name[0] != '\0')
+			snprintf(name, sizeof(name), "%s", bedrock_name);
 		else
-			snprintf(pretty, pretty_cap, "Bedrock Linux");
+			snprintf(name, sizeof(name), "Bedrock Linux");
+		if (bedrock_version_id[0] != '\0')
+			snprintf(version_id, sizeof(version_id), "%s", bedrock_version_id);
 	}
 
-	if (pretty[0] == '\0' && id[0] != '\0')
+	if (name[0] != '\0' && version_id[0] != '\0')
+		snprintf(pretty, pretty_cap, "%s %s", name, version_id);
+	else if (name[0] != '\0')
+		snprintf(pretty, pretty_cap, "%s", name);
+	else if (id[0] != '\0')
 		snprintf(pretty, pretty_cap, "%s", id);
 	shitfetch_strlower(id);
 }
@@ -136,24 +168,35 @@ read_os_release(char *id, size_t id_cap, char *pretty, size_t pretty_cap)
 static void
 detect_uptime(char *out, size_t cap)
 {
-	FILE *fp;
-	double sec;
+	struct timespec ts;
+	long sec = 0;
 	long total;
 	long days;
 	long hours;
 	long mins;
 
 	out[0] = '\0';
-	fp = fopen("/proc/uptime", "r");
-	if (fp == NULL)
-		return;
-	if (fscanf(fp, "%lf", &sec) != 1) {
-		fclose(fp);
-		return;
-	}
-	fclose(fp);
+#ifdef CLOCK_BOOTTIME
+	if (clock_gettime(CLOCK_BOOTTIME, &ts) == 0)
+		sec = ts.tv_sec;
+#endif
+	if (sec <= 0 && clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+		sec = ts.tv_sec;
+	if (sec <= 0) {
+		FILE *fp;
+		double proc_sec = 0.0;
 
-	total = (long)sec;
+		fp = fopen("/proc/uptime", "r");
+		if (fp == NULL)
+			return;
+		if (fscanf(fp, "%lf", &proc_sec) == 1)
+			sec = (long)proc_sec;
+		fclose(fp);
+	}
+	if (sec <= 0)
+		return;
+
+	total = sec;
 	days = total / 86400;
 	hours = (total % 86400) / 3600;
 	mins = (total % 3600) / 60;
@@ -220,29 +263,11 @@ detect_term(char *out, size_t cap)
 	const char *e;
 	const char *term;
 	const char *est_tty;
-	pid_t pid;
-	int ppid;
+	pid_t walk_pid;
+	pid_t next_ppid;
 	char comm[256];
 	char first_term[128] = {0};
 	int i;
-
-	pid = getpid();
-	ppid = read_ppid(pid);
-	for (i = 0; i < 24 && ppid > 1; i++) {
-		if (!read_comm((pid_t)ppid, comm, sizeof(comm)))
-			break;
-		if (strcmp(comm, "est") == 0) {
-			snprintf(out, cap, "est");
-			return;
-		}
-		if (first_term[0] == '\0' && !is_shell_name(comm) && !is_wrapper_name(comm))
-			snprintf(first_term, sizeof(first_term), "%s", comm);
-		ppid = read_ppid((pid_t)ppid);
-	}
-	if (first_term[0] != '\0') {
-		snprintf(out, cap, "%s", first_term);
-		return;
-	}
 
 	est_tty = getenv("EST_TTY");
 	if (est_tty != NULL && est_tty[0] != '\0') {
@@ -283,6 +308,23 @@ detect_term(char *out, size_t cap)
 	term = getenv("TERM");
 	if (term != NULL && strstr(term, "est") != NULL) {
 		snprintf(out, cap, "est");
+		return;
+	}
+
+	walk_pid = getppid();
+	for (i = 0; i < 24 && walk_pid > 1; i++) {
+		if (read_proc_stat(walk_pid, comm, sizeof(comm), &next_ppid) != 0 || comm[0] == '\0')
+			break;
+		if (strcmp(comm, "est") == 0) {
+			snprintf(out, cap, "est");
+			return;
+		}
+		if (first_term[0] == '\0' && !is_shell_name(comm) && !is_wrapper_name(comm))
+			snprintf(first_term, sizeof(first_term), "%s", comm);
+		walk_pid = next_ppid;
+	}
+	if (first_term[0] != '\0') {
+		snprintf(out, cap, "%s", first_term);
 		return;
 	}
 
@@ -393,83 +435,62 @@ detect_gpu(char *out, size_t cap)
 }
 
 static void
-detect_memory(char *out, size_t cap)
+detect_memory_swap(char *mem_out, size_t mem_cap, char *swap_out, size_t swap_cap)
 {
 	FILE *fp;
 	char key[64];
 	unsigned long long value;
 	char unit[32];
-	unsigned long long total = 0;
-	unsigned long long avail = 0;
-	unsigned long long used;
-	double used_gib;
-	double total_gib;
-	unsigned int percent;
-
-	out[0] = '\0';
-	fp = fopen("/proc/meminfo", "r");
-	if (fp == NULL)
-		return;
-
-	while (fscanf(fp, "%63s %llu %31s", key, &value, unit) == 3) {
-		if (strcmp(key, "MemTotal:") == 0)
-			total = value;
-		else if (strcmp(key, "MemAvailable:") == 0)
-			avail = value;
-	}
-	fclose(fp);
-
-	if (total == 0) {
-		snprintf(out, cap, "unknown");
-		return;
-	}
-	if (avail > total)
-		avail = 0;
-	used = total - avail;
-	used_gib = (double)used / (1024.0 * 1024.0);
-	total_gib = (double)total / (1024.0 * 1024.0);
-	percent = total == 0 ? 0 : (unsigned int)((used * 100ULL) / total);
-	snprintf(out, cap, "%.1f / %.1f GiB (%%{%u})", used_gib, total_gib, percent);
-}
-
-static void
-detect_swap(char *out, size_t cap)
-{
-	FILE *fp;
-	char key[64];
-	unsigned long long value;
-	char unit[32];
-	unsigned long long total = 0;
+	unsigned long long mem_total = 0;
+	unsigned long long mem_avail = 0;
+	unsigned long long swap_total = 0;
 	unsigned long long free_kib = 0;
 	unsigned long long used;
 	double used_gib;
 	double total_gib;
 	unsigned int percent;
 
-	out[0] = '\0';
+	mem_out[0] = '\0';
+	swap_out[0] = '\0';
 	fp = fopen("/proc/meminfo", "r");
 	if (fp == NULL)
 		return;
 
 	while (fscanf(fp, "%63s %llu %31s", key, &value, unit) == 3) {
-		if (strcmp(key, "SwapTotal:") == 0)
-			total = value;
+		if (strcmp(key, "MemTotal:") == 0)
+			mem_total = value;
+		else if (strcmp(key, "MemAvailable:") == 0)
+			mem_avail = value;
+		else if (strcmp(key, "SwapTotal:") == 0)
+			swap_total = value;
 		else if (strcmp(key, "SwapFree:") == 0)
 			free_kib = value;
 	}
 	fclose(fp);
 
-	if (total == 0) {
-		snprintf(out, cap, "0.0 / 0.0 GiB (%%{0})");
+	if (mem_total == 0) {
+		snprintf(mem_out, mem_cap, "unknown");
+	} else {
+		if (mem_avail > mem_total)
+			mem_avail = 0;
+		used = mem_total - mem_avail;
+		used_gib = (double)used / (1024.0 * 1024.0);
+		total_gib = (double)mem_total / (1024.0 * 1024.0);
+		percent = (unsigned int)((used * 100ULL) / mem_total);
+		snprintf(mem_out, mem_cap, "%.1f / %.1f GiB (%%{%u})", used_gib, total_gib, percent);
+	}
+
+	if (swap_total == 0) {
+		snprintf(swap_out, swap_cap, "0.0 / 0.0 GiB (%%{0})");
 		return;
 	}
-	if (free_kib > total)
+	if (free_kib > swap_total)
 		free_kib = 0;
-	used = total - free_kib;
+	used = swap_total - free_kib;
 	used_gib = (double)used / (1024.0 * 1024.0);
-	total_gib = (double)total / (1024.0 * 1024.0);
-	percent = (unsigned int)((used * 100ULL) / total);
-	snprintf(out, cap, "%.1f / %.1f GiB (%%{%u})", used_gib, total_gib, percent);
+	total_gib = (double)swap_total / (1024.0 * 1024.0);
+	percent = (unsigned int)((used * 100ULL) / swap_total);
+	snprintf(swap_out, swap_cap, "%.1f / %.1f GiB (%%{%u})", used_gib, total_gib, percent);
 }
 
 static void
@@ -692,9 +713,9 @@ append_pkg_segment(char *dst, size_t cap, const char *segment)
 }
 
 static int
-count_pacman_local(void)
+count_pacman_local_path(const char *path)
 {
-	DIR *dir = opendir("/var/lib/pacman/local");
+	DIR *dir = opendir(path);
 	struct dirent *ent;
 	int count = 0;
 
@@ -710,12 +731,21 @@ count_pacman_local(void)
 }
 
 static int
-count_dpkg_status(void)
+count_pacman_local(void)
 {
-	FILE *fp = fopen("/var/lib/dpkg/status", "r");
+	return count_pacman_local_path("/var/lib/pacman/local");
+}
+
+static int
+count_dpkg_status_file(const char *path)
+{
+	FILE *fp;
 	char line[256];
 	int count = 0;
 
+	if (path == NULL || path[0] == '\0')
+		return -1;
+	fp = fopen(path, "r");
 	if (fp == NULL)
 		return -1;
 	while (fgets(line, sizeof(line), fp) != NULL) {
@@ -727,9 +757,41 @@ count_dpkg_status(void)
 }
 
 static int
-count_apk_installed(void)
+count_dpkg_status(void)
 {
-	FILE *fp = fopen("/lib/apk/db/installed", "r");
+	int primary = count_dpkg_status_file("/var/lib/dpkg/status");
+
+	if (primary > 0 || !shitfetch_file_exists("/bedrock/etc/bedrock-release"))
+		return primary;
+
+	DIR *dir = opendir("/bedrock/strata");
+	struct dirent *ent;
+	int total = 0;
+	bool any = false;
+
+	if (dir == NULL)
+		return primary;
+	while ((ent = readdir(dir)) != NULL) {
+		char path[SHITFETCH_MAX_PATH];
+		int n;
+
+		if (ent->d_name[0] == '.')
+			continue;
+		snprintf(path, sizeof(path), "/bedrock/strata/%s/var/lib/dpkg/status", ent->d_name);
+		n = count_dpkg_status_file(path);
+		if (n > 0) {
+			total += n;
+			any = true;
+		}
+	}
+	closedir(dir);
+	return any ? total : primary;
+}
+
+static int
+count_apk_installed_path(const char *path)
+{
+	FILE *fp = fopen(path, "r");
 	char line[256];
 	int count = 0;
 
@@ -744,9 +806,15 @@ count_apk_installed(void)
 }
 
 static int
-count_xbps_db(void)
+count_apk_installed(void)
 {
-	DIR *dir = opendir("/var/db/xbps");
+	return count_apk_installed_path("/lib/apk/db/installed");
+}
+
+static int
+count_xbps_db_path(const char *path)
+{
+	DIR *dir = opendir(path);
 	struct dirent *ent;
 	int count = 0;
 	size_t len;
@@ -762,6 +830,134 @@ count_xbps_db(void)
 	return count;
 }
 
+static int
+count_xbps_db(void)
+{
+	return count_xbps_db_path("/var/db/xbps");
+}
+
+static int
+count_portage_db_path(const char *path)
+{
+	DIR *cats = opendir(path);
+	struct dirent *cat;
+	int count = 0;
+
+	if (cats == NULL)
+		return -1;
+	while ((cat = readdir(cats)) != NULL) {
+		DIR *pkgs;
+		struct dirent *pkg;
+		char cat_path[SHITFETCH_MAX_PATH];
+
+		if (cat->d_name[0] == '.')
+			continue;
+		snprintf(cat_path, sizeof(cat_path), "%s/%s", path, cat->d_name);
+		pkgs = opendir(cat_path);
+		if (pkgs == NULL)
+			continue;
+		while ((pkg = readdir(pkgs)) != NULL) {
+			if (pkg->d_name[0] == '.')
+				continue;
+			count++;
+		}
+		closedir(pkgs);
+	}
+	closedir(cats);
+	return count;
+}
+
+static bool
+collect_bedrock_packages(char *packages, size_t packages_cap)
+{
+	DIR *dir;
+	struct dirent *ent;
+	int pacman_total = 0;
+	int dpkg_total = 0;
+	int apk_total = 0;
+	int xbps_total = 0;
+	int portage_total = 0;
+	bool any = false;
+	char seg[64];
+
+	dir = opendir("/bedrock/strata");
+	if (dir == NULL)
+		return false;
+	while ((ent = readdir(dir)) != NULL) {
+		const char *stratum = ent->d_name;
+		char root[SHITFETCH_MAX_PATH];
+		char path[SHITFETCH_MAX_PATH];
+		int n;
+
+		if (stratum[0] == '.')
+			continue;
+		if (strcmp(stratum, "bedrock") == 0 || strcmp(stratum, "init") == 0 ||
+			strcmp(stratum, "local") == 0 || strcmp(stratum, "hijacked") == 0)
+			continue;
+
+		snprintf(root, sizeof(root), "/bedrock/strata/%s", stratum);
+
+		snprintf(path, sizeof(path), "%s/var/lib/pacman/local", root);
+		n = count_pacman_local_path(path);
+		if (n > 0) {
+			pacman_total += n;
+			any = true;
+		}
+
+		snprintf(path, sizeof(path), "%s/var/lib/dpkg/status", root);
+		n = count_dpkg_status_file(path);
+		if (n > 0) {
+			dpkg_total += n;
+			any = true;
+		}
+
+		snprintf(path, sizeof(path), "%s/lib/apk/db/installed", root);
+		n = count_apk_installed_path(path);
+		if (n > 0) {
+			apk_total += n;
+			any = true;
+		}
+
+		snprintf(path, sizeof(path), "%s/var/db/xbps", root);
+		n = count_xbps_db_path(path);
+		if (n > 0) {
+			xbps_total += n;
+			any = true;
+		}
+
+		snprintf(path, sizeof(path), "%s/var/db/pkg", root);
+		n = count_portage_db_path(path);
+		if (n > 0) {
+			portage_total += n;
+			any = true;
+		}
+	}
+	closedir(dir);
+
+	packages[0] = '\0';
+	if (pacman_total > 0) {
+		snprintf(seg, sizeof(seg), "%d (pacman)", pacman_total);
+		append_pkg_segment(packages, packages_cap, seg);
+	}
+	if (dpkg_total > 0) {
+		snprintf(seg, sizeof(seg), "%d (dpkg)", dpkg_total);
+		append_pkg_segment(packages, packages_cap, seg);
+	}
+	if (apk_total > 0) {
+		snprintf(seg, sizeof(seg), "%d (apk)", apk_total);
+		append_pkg_segment(packages, packages_cap, seg);
+	}
+	if (xbps_total > 0) {
+		snprintf(seg, sizeof(seg), "%d (xbps)", xbps_total);
+		append_pkg_segment(packages, packages_cap, seg);
+	}
+	if (portage_total > 0) {
+		snprintf(seg, sizeof(seg), "%d (portage)", portage_total);
+		append_pkg_segment(packages, packages_cap, seg);
+	}
+	return any;
+}
+
 static void
 detect_packages(const char *os_id, char *packages, size_t packages_cap)
 {
@@ -771,6 +967,8 @@ detect_packages(const char *os_id, char *packages, size_t packages_cap)
 	int count;
 
 	packages[0] = '\0';
+	if (is_bedrock && collect_bedrock_packages(packages, packages_cap))
+		return;
 
 	count = count_pacman_local();
 	if (count > 0) {
@@ -947,20 +1145,78 @@ shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfet
 	memset(data, 0, sizeof(*data));
 
 	read_os_release(data->os_id, sizeof(data->os_id), data->os_pretty, sizeof(data->os_pretty));
-	detect_kernel(data->kernel, sizeof(data->kernel));
-	detect_init(data->init, sizeof(data->init));
-	detect_uptime(data->uptime, sizeof(data->uptime));
-	detect_shell(data->shell, sizeof(data->shell));
-	detect_dewm(data->dewm, sizeof(data->dewm));
-	detect_host(data->host, sizeof(data->host));
-	detect_term(data->term, sizeof(data->term));
-	detect_cpu(data->cpu, sizeof(data->cpu));
-	detect_gpu(data->gpu, sizeof(data->gpu));
-	detect_memory(data->memory, sizeof(data->memory));
-	detect_swap(data->swap, sizeof(data->swap));
-	detect_disks(settings, data);
-	detect_packages(data->os_id, data->packages, sizeof(data->packages));
-	detect_display(data->display_id, sizeof(data->display_id), data->display, sizeof(data->display));
+	if (settings->module_enabled[SHITFETCH_MODULE_KERNEL])
+		detect_kernel(data->kernel, sizeof(data->kernel));
+	else
+		snprintf(data->kernel, sizeof(data->kernel), "unknown");
+
+	if (settings->module_enabled[SHITFETCH_MODULE_INIT])
+		detect_init(data->init, sizeof(data->init));
+	else
+		snprintf(data->init, sizeof(data->init), "unknown");
+
+	if (settings->module_enabled[SHITFETCH_MODULE_UPTIME])
+		detect_uptime(data->uptime, sizeof(data->uptime));
+	else
+		snprintf(data->uptime, sizeof(data->uptime), "unknown");
+
+	if (settings->module_enabled[SHITFETCH_MODULE_SHELL])
+		detect_shell(data->shell, sizeof(data->shell));
+	else
+		snprintf(data->shell, sizeof(data->shell), "unknown");
+
+	if (settings->module_enabled[SHITFETCH_MODULE_DEWM])
+		detect_dewm(data->dewm, sizeof(data->dewm));
+	else
+		snprintf(data->dewm, sizeof(data->dewm), "unknown");
+
+	if (settings->module_enabled[SHITFETCH_MODULE_HOST])
+		detect_host(data->host, sizeof(data->host));
+	else
+		snprintf(data->host, sizeof(data->host), "unknown");
+
+	if (settings->module_enabled[SHITFETCH_MODULE_TERM])
+		detect_term(data->term, sizeof(data->term));
+	else
+		snprintf(data->term, sizeof(data->term), "unknown");
+
+	if (settings->module_enabled[SHITFETCH_MODULE_CPU])
+		detect_cpu(data->cpu, sizeof(data->cpu));
+	else
+		snprintf(data->cpu, sizeof(data->cpu), "unknown");
+
+	if (settings->module_enabled[SHITFETCH_MODULE_GPU])
+		detect_gpu(data->gpu, sizeof(data->gpu));
+	else
+		snprintf(data->gpu, sizeof(data->gpu), "unknown");
+
+	if (settings->module_enabled[SHITFETCH_MODULE_MEMORY] || settings->module_enabled[SHITFETCH_MODULE_SWAP])
+		detect_memory_swap(data->memory, sizeof(data->memory), data->swap, sizeof(data->swap));
+	else {
+		snprintf(data->memory, sizeof(data->memory), "unknown");
+		snprintf(data->swap, sizeof(data->swap), "unknown");
+	}
+
+	if (settings->module_enabled[SHITFETCH_MODULE_DISK]) {
+		detect_disks(settings, data);
+	} else {
+		data->disk_count = 1;
+		snprintf(data->disk_mounts[0], sizeof(data->disk_mounts[0]), "/");
+		snprintf(data->disk_values[0], sizeof(data->disk_values[0]), "unknown");
+		snprintf(data->disk, sizeof(data->disk), "unknown");
+	}
+
+	if (settings->module_enabled[SHITFETCH_MODULE_PACKAGES])
+		detect_packages(data->os_id, data->packages, sizeof(data->packages));
+	else
+		snprintf(data->packages, sizeof(data->packages), "unknown");
+
+	if (settings->module_enabled[SHITFETCH_MODULE_DISPLAY]) {
+		detect_display(data->display_id, sizeof(data->display_id), data->display, sizeof(data->display));
+	} else {
+		snprintf(data->display_id, sizeof(data->display_id), "unknown");
+		snprintf(data->display, sizeof(data->display), "unknown");
+	}
 
 	if (data->os_pretty[0] == '\0')
 		snprintf(data->os_pretty, sizeof(data->os_pretty), "unknown");
