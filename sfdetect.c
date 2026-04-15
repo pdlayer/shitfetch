@@ -274,25 +274,90 @@ detect_shell(char *out, size_t cap)
 static void
 detect_dewm(char *out, size_t cap)
 {
-	const char *v;
+	const char *session_type;
+	const char *de;
+	uid_t uid;
+	DIR *procdir;
+	struct dirent *ent;
+	char proc_path[SHITFETCH_MAX_PATH];
+	char cmdline[256];
+	FILE *fp;
+	char basename_buf[128];
+	char wm_found[128] = {0};
 
-	v = getenv("XDG_CURRENT_DESKTOP");
-	if (v != NULL && v[0] != '\0') {
-		snprintf(out, cap, "%s", v);
+	session_type = getenv("XDG_SESSION_TYPE");
+	de = getenv("XDG_CURRENT_DESKTOP");
+
+	procdir = opendir("/proc");
+	if (procdir == NULL) {
+		if (de != NULL && de[0] != '\0') {
+			if (session_type != NULL && session_type[0] != '\0')
+				snprintf(out, cap, "%s (%s)", de, session_type);
+			else
+				snprintf(out, cap, "%s", de);
+		} else {
+			snprintf(out, cap, "unknown");
+		}
 		return;
 	}
-	v = getenv("DESKTOP_SESSION");
-	if (v != NULL && v[0] != '\0') {
-		snprintf(out, cap, "%s", v);
+
+	uid = getuid();
+
+	while ((ent = readdir(procdir)) != NULL) {
+		int n;
+
+		if (ent->d_type != DT_DIR || ent->d_name[0] < '0' || ent->d_name[0] > '9')
+			continue;
+
+		snprintf(proc_path, sizeof(proc_path), "/proc/%s/loginuid", ent->d_name);
+		fp = fopen(proc_path, "r");
+		if (fp == NULL)
+			continue;
+		n = fscanf(fp, "%d", &n);
+		fclose(fp);
+		if (n != 1 || (uid_t)n != uid)
+			continue;
+
+		snprintf(proc_path, sizeof(proc_path), "/proc/%s/cmdline", ent->d_name);
+		fp = fopen(proc_path, "r");
+		if (fp == NULL)
+			continue;
+		cmdline[0] = '\0';
+		fgets(cmdline, sizeof(cmdline), fp);
+		fclose(fp);
+		if (cmdline[0] == '\0')
+			continue;
+		shitfetch_basename(cmdline, basename_buf, sizeof(basename_buf));
+		if (strlen(basename_buf) > strlen(wm_found))
+			snprintf(wm_found, sizeof(wm_found), "%s", basename_buf);
+	}
+	closedir(procdir);
+
+	if (wm_found[0] != '\0') {
+		if (session_type != NULL && session_type[0] != '\0')
+			snprintf(out, cap, "%s (%s)", wm_found, session_type);
+		else
+			snprintf(out, cap, "%s", wm_found);
 		return;
 	}
-	v = getenv("WAYLAND_DISPLAY");
-	if (v != NULL && v[0] != '\0') {
+
+	if (de != NULL && de[0] != '\0') {
+		if (session_type != NULL && session_type[0] != '\0')
+			snprintf(out, cap, "%s (%s)", de, session_type);
+		else
+			snprintf(out, cap, "%s", de);
+		return;
+	}
+
+	if (session_type != NULL && session_type[0] != '\0') {
+		snprintf(out, cap, "%s", session_type);
+		return;
+	}
+	if (getenv("WAYLAND_DISPLAY") != NULL) {
 		snprintf(out, cap, "Wayland");
 		return;
 	}
-	v = getenv("DISPLAY");
-	if (v != NULL && v[0] != '\0') {
+	if (getenv("DISPLAY") != NULL) {
 		snprintf(out, cap, "X11");
 		return;
 	}
@@ -481,9 +546,7 @@ static void
 detect_memory_swap(char *mem_out, size_t mem_cap, char *swap_out, size_t swap_cap)
 {
 	FILE *fp;
-	char key[64];
-	unsigned long long value;
-	char unit[32];
+	char line[256];
 	unsigned long long mem_total = 0;
 	unsigned long long mem_avail = 0;
 	unsigned long long swap_total = 0;
@@ -499,15 +562,27 @@ detect_memory_swap(char *mem_out, size_t mem_cap, char *swap_out, size_t swap_ca
 	if (fp == NULL)
 		return;
 
-	while (fscanf(fp, "%63s %llu %31s", key, &value, unit) == 3) {
-		if (strcmp(key, "MemTotal:") == 0)
-			mem_total = value;
-		else if (strcmp(key, "MemAvailable:") == 0)
-			mem_avail = value;
-		else if (strcmp(key, "SwapTotal:") == 0)
-			swap_total = value;
-		else if (strcmp(key, "SwapFree:") == 0)
-			free_kib = value;
+	while (fgets(line, sizeof(line), fp) != NULL) {
+		char *key;
+		char *value;
+		unsigned long long val;
+
+		key = line;
+		value = strchr(line, ':');
+		if (value == NULL)
+			continue;
+		*value = '\0';
+		value++;
+		val = strtoull(value, NULL, 10);
+
+		if (strcmp(key, "MemTotal") == 0)
+			mem_total = val;
+		else if (strcmp(key, "MemAvailable") == 0)
+			mem_avail = val;
+		else if (strcmp(key, "SwapTotal") == 0)
+			swap_total = val;
+		else if (strcmp(key, "SwapFree") == 0)
+			free_kib = val;
 	}
 	fclose(fp);
 
