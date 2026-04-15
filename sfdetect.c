@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
 
 #include "sf.h"
 #include "sfutil.h"
@@ -209,12 +210,54 @@ detect_uptime(char *out, size_t cap)
 		snprintf(out, cap, "%ldm", mins);
 }
 
+static const char *
+init_name_prettify(const char *name)
+{
+	if (strcmp(name, "systemd") == 0) return "systemd";
+	if (strcmp(name, "openrc-init") == 0) return "OpenRC";
+	if (strcmp(name, "runit") == 0) return "runit";
+	if (strcmp(name, "s6-svscan") == 0) return "s6";
+	if (strcmp(name, "s6-init") == 0) return "s6";
+	if (strcmp(name, "dinit") == 0) return "dinit";
+	if (strcmp(name, "runit-init") == 0) return "runit";
+	if (strcmp(name, "sv") == 0) return "runit";
+	if (strcmp(name, "init") == 0) return "sysvinit";
+	if (strcmp(name, "tini") == 0) return "tini";
+	if (strcmp(name, "dumb-init") == 0) return "dumb-init";
+	return NULL;
+}
+
 static void
 detect_init(char *out, size_t cap)
 {
+	char target[SHITFETCH_MAX_PATH];
+	char basename_buf[256];
+	ssize_t len;
+	const char *pretty;
+
+	len = readlink("/sbin/init", target, sizeof(target) - 1);
+	if (len > 0) {
+		target[len] = '\0';
+		shitfetch_basename(target, basename_buf, sizeof(basename_buf));
+		pretty = init_name_prettify(basename_buf);
+		if (pretty != NULL) {
+			snprintf(out, cap, "%s", pretty);
+			return;
+		}
+		snprintf(out, cap, "%s", basename_buf);
+		return;
+	}
+
 	read_first_line("/proc/1/comm", out, cap);
-	if (out[0] == '\0')
+	if (out[0] != '\0') {
+		pretty = init_name_prettify(out);
+		if (pretty != NULL) {
+			snprintf(out, cap, "%s", pretty);
+			return;
+		}
+	} else {
 		snprintf(out, cap, "unknown");
+	}
 }
 
 static void
@@ -867,6 +910,337 @@ count_portage_db_path(const char *path)
 	return count;
 }
 
+static int
+count_portage_vardb(void)
+{
+	return count_portage_db_path("/var/db/pkg");
+}
+
+static int
+count_nix_store_path(const char *path)
+{
+	DIR *dir = opendir(path);
+	struct dirent *ent;
+	int count = 0;
+
+	if (dir == NULL)
+		return -1;
+	while ((ent = readdir(dir)) != NULL) {
+		if (ent->d_name[0] == '.')
+			continue;
+		if (strchr(ent->d_name, '-') != NULL)
+			count++;
+	}
+	closedir(dir);
+	return count;
+}
+
+static int
+count_nix_store(void)
+{
+	return count_nix_store_path("/nix/store");
+}
+
+static int
+count_flatpak_system(void)
+{
+	DIR *dir;
+	struct dirent *ent;
+	int count = 0;
+
+	dir = opendir("/var/lib/flatpak/app");
+	if (dir != NULL) {
+		while ((ent = readdir(dir)) != NULL) {
+			if (ent->d_name[0] == '.')
+				continue;
+			count++;
+		}
+		closedir(dir);
+	}
+
+	dir = opendir("/var/lib/flatpak/runtime");
+	if (dir != NULL) {
+		while ((ent = readdir(dir)) != NULL) {
+			if (ent->d_name[0] == '.')
+				continue;
+			count++;
+		}
+		closedir(dir);
+	}
+	return count;
+}
+
+static int
+count_flatpak_user(void)
+{
+	const char *home;
+	char path[SHITFETCH_MAX_PATH];
+	DIR *dir;
+	struct dirent *ent;
+	int count = 0;
+
+	home = getenv("HOME");
+	if (home == NULL || home[0] == '\0')
+		return -1;
+	snprintf(path, sizeof(path), "%s/.local/share/flatpak/app", home);
+	dir = opendir(path);
+	if (dir == NULL)
+		return -1;
+	while ((ent = readdir(dir)) != NULL) {
+		if (ent->d_name[0] == '.')
+			continue;
+		count++;
+	}
+	closedir(dir);
+	return count;
+}
+
+static int
+count_flatpak(void)
+{
+	int system = count_flatpak_system();
+	int user = count_flatpak_user();
+	int system_ok = system > 0 ? system : 0;
+	int user_ok = user > 0 ? user : 0;
+
+	return system_ok + user_ok;
+}
+
+static int
+count_snap_core(void)
+{
+	DIR *dir = opendir("/snap");
+	struct dirent *ent;
+	int count = 0;
+
+	if (dir == NULL)
+		return -1;
+	while ((ent = readdir(dir)) != NULL) {
+		if (ent->d_name[0] == '.')
+			continue;
+		if (ent->d_type == DT_DIR)
+			count++;
+	}
+	closedir(dir);
+	return count;
+}
+
+static int
+count_snap_varlib(void)
+{
+	DIR *dir = opendir("/var/lib/snapd/snaps");
+	struct dirent *ent;
+	int count = 0;
+	size_t len;
+
+	if (dir == NULL)
+		return -1;
+	while ((ent = readdir(dir)) != NULL) {
+		len = strlen(ent->d_name);
+		if (len > 5 && strcmp(ent->d_name + len - 5, ".snap") == 0)
+			count++;
+	}
+	closedir(dir);
+	return count;
+}
+
+static int
+count_snap(void)
+{
+	int cores = count_snap_core();
+	int varlib = count_snap_varlib();
+
+	if (varlib > 0)
+		return varlib;
+	if (cores > 0)
+		return cores;
+	return -1;
+}
+
+static int
+count_homebrew_cellar(void)
+{
+	const char *home;
+	char path[SHITFETCH_MAX_PATH];
+	DIR *dir;
+	struct dirent *ent;
+	int count = 0;
+
+	home = getenv("HOME");
+	if (home == NULL)
+		home = "/root";
+
+	snprintf(path, sizeof(path), "%s/.linuxbrew/Cellar", home);
+	dir = opendir(path);
+	if (dir != NULL) {
+		while ((ent = readdir(dir)) != NULL) {
+			DIR *vers;
+			struct dirent *v;
+
+			if (ent->d_name[0] == '.')
+				continue;
+			snprintf(path, sizeof(path), "%s/.linuxbrew/Cellar/%s", home, ent->d_name);
+			vers = opendir(path);
+			if (vers == NULL)
+				continue;
+			while ((v = readdir(vers)) != NULL) {
+				if (v->d_name[0] == '.')
+					continue;
+				count++;
+			}
+			closedir(vers);
+		}
+		closedir(dir);
+		if (count > 0)
+			return count;
+	}
+
+	dir = opendir("/home/linuxbrew/.linuxbrew/Cellar");
+	if (dir != NULL) {
+		while ((ent = readdir(dir)) != NULL) {
+			DIR *vers;
+			struct dirent *v;
+
+			if (ent->d_name[0] == '.')
+				continue;
+			snprintf(path, sizeof(path), "/home/linuxbrew/.linuxbrew/Cellar/%s", ent->d_name);
+			vers = opendir(path);
+			if (vers == NULL)
+				continue;
+			while ((v = readdir(vers)) != NULL) {
+				if (v->d_name[0] == '.')
+					continue;
+				count++;
+			}
+			closedir(vers);
+		}
+		closedir(dir);
+		if (count > 0)
+			return count;
+	}
+
+	snprintf(path, sizeof(path), "%s/homebrew/Cellar", home);
+	dir = opendir(path);
+	if (dir != NULL) {
+		while ((ent = readdir(dir)) != NULL) {
+			DIR *vers;
+			struct dirent *v;
+
+			if (ent->d_name[0] == '.')
+				continue;
+			snprintf(path, sizeof(path), "%s/homebrew/Cellar/%s", home, ent->d_name);
+			vers = opendir(path);
+			if (vers == NULL)
+				continue;
+			while ((v = readdir(vers)) != NULL) {
+				if (v->d_name[0] == '.')
+					continue;
+				count++;
+			}
+			closedir(vers);
+		}
+		closedir(dir);
+		if (count > 0)
+			return count;
+	}
+
+	dir = opendir("/usr/local/Cellar");
+	if (dir != NULL) {
+		while ((ent = readdir(dir)) != NULL) {
+			DIR *vers;
+			struct dirent *v;
+
+			if (ent->d_name[0] == '.')
+				continue;
+			snprintf(path, sizeof(path), "/usr/local/Cellar/%s", ent->d_name);
+			vers = opendir(path);
+			if (vers == NULL)
+				continue;
+			while ((v = readdir(vers)) != NULL) {
+				if (v->d_name[0] == '.')
+					continue;
+				count++;
+			}
+			closedir(vers);
+		}
+		closedir(dir);
+	}
+	return count;
+}
+
+static int
+count_homebrew_opt(void)
+{
+	const char *home;
+	char path[SHITFETCH_MAX_PATH];
+	DIR *dir;
+	struct dirent *ent;
+	int count = 0;
+
+	home = getenv("HOME");
+	if (home == NULL)
+		home = "/root";
+
+	snprintf(path, sizeof(path), "%s/.linuxbrew/opt", home);
+	dir = opendir(path);
+	if (dir != NULL) {
+		while ((ent = readdir(dir)) != NULL) {
+			if (ent->d_name[0] == '.')
+				continue;
+			count++;
+		}
+		closedir(dir);
+		if (count > 0)
+			return count;
+	}
+
+	dir = opendir("/home/linuxbrew/.linuxbrew/opt");
+	if (dir != NULL) {
+		while ((ent = readdir(dir)) != NULL) {
+			if (ent->d_name[0] == '.')
+				continue;
+			count++;
+		}
+		closedir(dir);
+		if (count > 0)
+			return count;
+	}
+
+	snprintf(path, sizeof(path), "%s/homebrew/opt", home);
+	dir = opendir(path);
+	if (dir != NULL) {
+		while ((ent = readdir(dir)) != NULL) {
+			if (ent->d_name[0] == '.')
+				continue;
+			count++;
+		}
+		closedir(dir);
+		if (count > 0)
+			return count;
+	}
+
+	dir = opendir("/usr/local/opt");
+	if (dir != NULL) {
+		while ((ent = readdir(dir)) != NULL) {
+			if (ent->d_name[0] == '.')
+				continue;
+			count++;
+		}
+		closedir(dir);
+	}
+	return count;
+}
+
+static int
+count_homebrew(void)
+{
+	int cellar = count_homebrew_cellar();
+
+	if (cellar > 0)
+		return cellar;
+	return count_homebrew_opt();
+}
+
 static bool
 collect_bedrock_packages(char *packages, size_t packages_cap)
 {
@@ -877,6 +1251,10 @@ collect_bedrock_packages(char *packages, size_t packages_cap)
 	int apk_total = 0;
 	int xbps_total = 0;
 	int portage_total = 0;
+	int nix_total = 0;
+	int flatpak_total = 0;
+	int snap_total = 0;
+	int homebrew_total = 0;
 	bool any = false;
 	char seg[64];
 
@@ -931,6 +1309,20 @@ collect_bedrock_packages(char *packages, size_t packages_cap)
 			portage_total += n;
 			any = true;
 		}
+
+		snprintf(path, sizeof(path), "%s/nix/store", root);
+		n = count_nix_store_path(path);
+		if (n > 0) {
+			nix_total += n;
+			any = true;
+		}
+
+		snprintf(path, sizeof(path), "%s/var/lib/flatpak/app", root);
+		n = count_flatpak_system();
+		if (n > 0) {
+			flatpak_total += n;
+			any = true;
+		}
 	}
 	closedir(dir);
 
@@ -953,6 +1345,22 @@ collect_bedrock_packages(char *packages, size_t packages_cap)
 	}
 	if (portage_total > 0) {
 		snprintf(seg, sizeof(seg), "%d (portage)", portage_total);
+		append_pkg_segment(packages, packages_cap, seg);
+	}
+	if (nix_total > 0) {
+		snprintf(seg, sizeof(seg), "%d (nix)", nix_total);
+		append_pkg_segment(packages, packages_cap, seg);
+	}
+	if (flatpak_total > 0) {
+		snprintf(seg, sizeof(seg), "%d (flatpak)", flatpak_total);
+		append_pkg_segment(packages, packages_cap, seg);
+	}
+	if (snap_total > 0) {
+		snprintf(seg, sizeof(seg), "%d (snap)", snap_total);
+		append_pkg_segment(packages, packages_cap, seg);
+	}
+	if (homebrew_total > 0) {
+		snprintf(seg, sizeof(seg), "%d (homebrew)", homebrew_total);
 		append_pkg_segment(packages, packages_cap, seg);
 	}
 	return any;
@@ -991,6 +1399,36 @@ detect_packages(const char *os_id, char *packages, size_t packages_cap)
 	count = count_xbps_db();
 	if (count > 0) {
 		snprintf(seg, sizeof(seg), "%d (xbps)", count);
+		append_pkg_segment(packages, packages_cap, seg);
+		has_any = true;
+	}
+	count = count_portage_vardb();
+	if (count > 0) {
+		snprintf(seg, sizeof(seg), "%d (portage)", count);
+		append_pkg_segment(packages, packages_cap, seg);
+		has_any = true;
+	}
+	count = count_nix_store();
+	if (count > 0) {
+		snprintf(seg, sizeof(seg), "%d (nix)", count);
+		append_pkg_segment(packages, packages_cap, seg);
+		has_any = true;
+	}
+	count = count_flatpak();
+	if (count > 0) {
+		snprintf(seg, sizeof(seg), "%d (flatpak)", count);
+		append_pkg_segment(packages, packages_cap, seg);
+		has_any = true;
+	}
+	count = count_snap();
+	if (count > 0) {
+		snprintf(seg, sizeof(seg), "%d (snap)", count);
+		append_pkg_segment(packages, packages_cap, seg);
+		has_any = true;
+	}
+	count = count_homebrew();
+	if (count > 0) {
+		snprintf(seg, sizeof(seg), "%d (homebrew)", count);
 		append_pkg_segment(packages, packages_cap, seg);
 		has_any = true;
 	}
