@@ -4,7 +4,6 @@ TARGET = shitfetch
 BUILD_DIR = build
 OBJ = \
 	$(BUILD_DIR)/sf.o \
-	$(BUILD_DIR)/sfconfig.o \
 	$(BUILD_DIR)/sfdetect.o \
 	$(BUILD_DIR)/sflogo.o \
 	$(BUILD_DIR)/sfrender.o \
@@ -12,8 +11,8 @@ OBJ = \
 	$(BUILD_DIR)/sfansi.o \
 	$(BUILD_DIR)/sfcolor.o
 
-CPPFLAGS += -DSHITFETCH_SYSTEM_CONFIG='"/etc/shitfetch/config.kdl"'
-CFLAGS += -std=$(CSTD) -Wall -Wextra -Wpedantic -Wno-trigraphs
+CPPFLAGS += -DSHITFETCH_ASCII_DIR='"/usr/local/share/shitfetch/ascii"'
+CFLAGS += -std=$(CSTD) -Wall -Wextra -Wpedantic -Wno-trigraphs -Wno-format-truncation
 
 .PHONY: all clean install uninstall
 
@@ -37,12 +36,6 @@ clean:
 install: $(TARGET)
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m 755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/$(TARGET)
-	ln -sf $(TARGET) $(DESTDIR)$(PREFIX)/bin/sf
-	install -d $(DESTDIR)/etc/shitfetch
-	if [ ! -f $(DESTDIR)/etc/shitfetch/config.kdl ]; then \
-		install -m 644 config.kdl $(DESTDIR)/etc/shitfetch/config.kdl; \
-	fi
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/$(TARGET)
-	rm -f $(DESTDIR)$(PREFIX)/bin/sf

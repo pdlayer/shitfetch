@@ -5,10 +5,69 @@
 #include <stdio.h>
 #include <string.h>
 
+static const enum shitfetch_module default_order[] = {
+	SHITFETCH_MODULE_OS,
+	SHITFETCH_MODULE_KERNEL,
+	SHITFETCH_MODULE_INIT,
+	SHITFETCH_MODULE_UPTIME,
+	SHITFETCH_MODULE_PACKAGES,
+	SHITFETCH_MODULE_SHELL,
+	SHITFETCH_MODULE_DISPLAY,
+	SHITFETCH_MODULE_DEWM,
+	SHITFETCH_MODULE_TERM,
+	SHITFETCH_MODULE_CPU,
+	SHITFETCH_MODULE_GPU,
+	SHITFETCH_MODULE_MEMORY,
+	SHITFETCH_MODULE_SWAP,
+	SHITFETCH_MODULE_DISK,
+};
+
+static int
+append_module(struct shitfetch_settings *settings, enum shitfetch_module module)
+{
+	size_t idx;
+
+	if (settings->entry_count >= SHITFETCH_MAX_MODULE_ENTRIES)
+		return -1;
+	idx = settings->entry_count++;
+	settings->entries[idx].kind = SHITFETCH_ENTRY_MODULE;
+	settings->entries[idx].module = module;
+	settings->entries[idx].enabled = true;
+	return 0;
+}
+
+void
+shitfetch_settings_init(struct shitfetch_settings *settings)
+{
+	size_t i;
+
+	memset(settings, 0, sizeof(*settings));
+	settings->show_logo = true;
+	settings->show_header = true;
+	snprintf(settings->logo, sizeof(settings->logo), "auto");
+	settings->show_ansi = true;
+	settings->key_color = 36;
+	settings->value_color = 39;
+	snprintf(settings->key_color_spec, sizeof(settings->key_color_spec), "logo");
+	snprintf(settings->separator, sizeof(settings->separator), ": ");
+	settings->disk_all = true;
+	settings->disk_show_fs = true;
+	snprintf(settings->ascii_dir, sizeof(settings->ascii_dir), "%s", SHITFETCH_ASCII_DIR);
+
+	for (i = 0; i < SHITFETCH_MODULE_COUNT; i++)
+		settings->module_enabled[i] = true;
+	settings->module_count = sizeof(default_order) / sizeof(default_order[0]);
+	for (i = 0; i < settings->module_count; i++)
+		settings->module_order[i] = default_order[i];
+	settings->entry_count = 0;
+	for (i = 0; i < settings->module_count; i++)
+		(void)append_module(settings, settings->module_order[i]);
+}
+
 static void
 print_help(FILE *out)
 {
-	fputs("shitfetch - minimal but configurable linux fetch\n", out);
+	fputs("shitfetch - minimal linux fetch\n", out);
 	fputs("\n", out);
 	fputs("usage:\n", out);
 	fputs("  shitfetch [options]\n", out);
@@ -16,8 +75,6 @@ print_help(FILE *out)
 	fputs("options:\n", out);
 	fputs("  -h, --help        show help\n", out);
 	fputs("  -v, --version     show version\n", out);
-	fputs("  -g, --conf-gen    generate ~/.config/shitfetch/config.kdl\n", out);
-	fputs("  -c, --config PATH load config file\n", out);
 	fputs("  -l, --logo NAME   set logo name (or none)\n", out);
 }
 
@@ -32,11 +89,8 @@ main(int argc, char **argv)
 	size_t logo_count;
 	size_t info_count;
 	int i;
-	bool cli_logo = false;
-	const char *cli_config = NULL;
 
 	shitfetch_settings_init(&settings);
-	(void)shitfetch_load_default_configs(&settings);
 
 	for (i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -47,56 +101,24 @@ main(int argc, char **argv)
 			printf("shitfetch %s\n", SHITFETCH_VERSION);
 			return 0;
 		}
-		if (strcmp(argv[i], "-g") == 0 || strcmp(argv[i], "--conf-gen") == 0) {
-			if (!shitfetch_generate_config(&settings)) {
-				fprintf(stderr, "shitfetch: failed to generate config\n");
-				return 1;
-			}
-			return 0;
-		}
-		if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) {
-			if (i + 1 >= argc) {
-				fprintf(stderr, "shitfetch: missing value for %s\n", argv[i]);
-				return 1;
-			}
-			cli_config = argv[++i];
-			continue;
-		}
-		if (strncmp(argv[i], "--config=", 9) == 0) {
-			cli_config = argv[i] + 9;
-			continue;
-		}
 		if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--logo") == 0) {
 			if (i + 1 >= argc) {
 				fprintf(stderr, "shitfetch: missing value for %s\n", argv[i]);
 				return 1;
 			}
 			snprintf(settings.logo, sizeof(settings.logo), "%s", argv[++i]);
-			cli_logo = true;
+			settings.show_logo = strcmp(settings.logo, "none") != 0;
 			continue;
 		}
 		if (strncmp(argv[i], "--logo=", 7) == 0) {
 			snprintf(settings.logo, sizeof(settings.logo), "%s", argv[i] + 7);
-			cli_logo = true;
+			settings.show_logo = strcmp(settings.logo, "none") != 0;
 			continue;
 		}
 
 		fprintf(stderr, "shitfetch: unknown option: %s\n", argv[i]);
 		print_help(stderr);
 		return 1;
-	}
-
-	if (cli_config != NULL) {
-		if (!shitfetch_load_config(&settings, cli_config)) {
-			fprintf(stderr, "shitfetch: failed to load config: %s\n", cli_config);
-			return 1;
-		}
-	}
-	if (cli_logo) {
-		if (strcmp(settings.logo, "none") == 0)
-			settings.show_logo = false;
-		else
-			settings.show_logo = true;
 	}
 
 	shitfetch_collect_data(&settings, &data);

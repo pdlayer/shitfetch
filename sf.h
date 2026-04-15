@@ -27,7 +27,7 @@ enum shitfetch_entry_kind {
 #endif
 
 #ifndef SHITFETCH_SYSTEM_CONFIG
-#define SHITFETCH_SYSTEM_CONFIG "/etc/shitfetch/config.kdl"
+#define SHITFETCH_SYSTEM_CONFIG ""
 #endif
 
 enum shitfetch_module {
