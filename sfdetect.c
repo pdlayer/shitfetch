@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <pthread.h>
 #include <dirent.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
@@ -77,6 +78,62 @@ is_wrapper_name(const char *s)
 {
 	return strcmp(s, "sudo") == 0 || strcmp(s, "doas") == 0 || strcmp(s, "login") == 0 ||
 		strcmp(s, "systemd") == 0 || strcmp(s, "tmux") == 0 || strcmp(s, "screen") == 0;
+}
+
+static bool
+is_known_dewm_name(const char *s)
+{
+	static const char *known[] = {
+		"hyprland", "niri", "sway", "river", "wayfire", "labwc", "waybox", "hikari",
+		"kwin_wayland", "kwin", "mutter", "gnome-shell", "cinnamon", "xfwm4", "openbox",
+		"bspwm", "i3", "i3wm", "dwm", "xmonad", "awesome", "qtile", "spectrwm", "icewm",
+		"jwm", "blackbox", "fluxbox", "enlightenment", "weston", "mate-session", "lxqt-session",
+		"startplasma-wayland", "startplasma-x11"
+	};
+	size_t i;
+
+	for (i = 0; i < sizeof(known) / sizeof(known[0]); i++) {
+		if (strcmp(s, known[i]) == 0)
+			return true;
+	}
+	return false;
+}
+
+static const char *
+first_nonempty_env(const char *a, const char *b, const char *c)
+{
+	const char *value;
+
+	value = getenv(a);
+	if (value != NULL && value[0] != '\0')
+		return value;
+	value = getenv(b);
+	if (value != NULL && value[0] != '\0')
+		return value;
+	value = getenv(c);
+	if (value != NULL && value[0] != '\0')
+		return value;
+	return NULL;
+}
+
+static void
+copy_desktop_name(const char *src, char *out, size_t cap)
+{
+	const char *end;
+	size_t len;
+
+	if (cap == 0)
+		return;
+	out[0] = '\0';
+	if (src == NULL || src[0] == '\0')
+		return;
+
+	end = strchr(src, ':');
+	len = end != NULL ? (size_t)(end - src) : strlen(src);
+	if (len >= cap)
+		len = cap - 1;
+	memcpy(out, src, len);
+	out[len] = '\0';
 }
 
 static void
@@ -275,27 +332,35 @@ static void
 detect_dewm(char *out, size_t cap)
 {
 	const char *session_type;
-	const char *de;
+	const char *desktop_env;
 	uid_t uid;
 	DIR *procdir;
 	struct dirent *ent;
 	char proc_path[SHITFETCH_MAX_PATH];
 	char cmdline[256];
+	char desktop_name[128];
 	FILE *fp;
 	char basename_buf[128];
 	char wm_found[128] = {0};
+	uid_t loginuid;
+	int loginuid_read;
 
 	session_type = getenv("XDG_SESSION_TYPE");
-	de = getenv("XDG_CURRENT_DESKTOP");
+	desktop_env = first_nonempty_env("XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "DESKTOP_SESSION");
+	copy_desktop_name(desktop_env, desktop_name, sizeof(desktop_name));
+	if (desktop_name[0] != '\0') {
+		if (session_type != NULL && session_type[0] != '\0')
+			snprintf(out, cap, "%s (%s)", desktop_name, session_type);
+		else
+			snprintf(out, cap, "%s", desktop_name);
+		return;
+	}
 
 	procdir = opendir("/proc");
 	if (procdir == NULL) {
-		if (de != NULL && de[0] != '\0') {
-			if (session_type != NULL && session_type[0] != '\0')
-				snprintf(out, cap, "%s (%s)", de, session_type);
-			else
-				snprintf(out, cap, "%s", de);
-		} else {
+		if (session_type != NULL && session_type[0] != '\0')
+			snprintf(out, cap, "%s", session_type);
+		else {
 			snprintf(out, cap, "unknown");
 		}
 		return;
@@ -304,8 +369,6 @@ detect_dewm(char *out, size_t cap)
 	uid = getuid();
 
 	while ((ent = readdir(procdir)) != NULL) {
-		int n;
-
 		if (ent->d_type != DT_DIR || ent->d_name[0] < '0' || ent->d_name[0] > '9')
 			continue;
 
@@ -313,9 +376,9 @@ detect_dewm(char *out, size_t cap)
 		fp = fopen(proc_path, "r");
 		if (fp == NULL)
 			continue;
-		n = fscanf(fp, "%d", &n);
+		loginuid_read = fscanf(fp, "%u", &loginuid);
 		fclose(fp);
-		if (n != 1 || (uid_t)n != uid)
+		if (loginuid_read != 1 || loginuid != uid)
 			continue;
 
 		snprintf(proc_path, sizeof(proc_path), "/proc/%s/cmdline", ent->d_name);
@@ -328,6 +391,10 @@ detect_dewm(char *out, size_t cap)
 		if (cmdline[0] == '\0')
 			continue;
 		shitfetch_basename(cmdline, basename_buf, sizeof(basename_buf));
+		if (is_known_dewm_name(basename_buf)) {
+			snprintf(wm_found, sizeof(wm_found), "%s", basename_buf);
+			break;
+		}
 		if (strlen(basename_buf) > strlen(wm_found))
 			snprintf(wm_found, sizeof(wm_found), "%s", basename_buf);
 	}
@@ -338,14 +405,6 @@ detect_dewm(char *out, size_t cap)
 			snprintf(out, cap, "%s (%s)", wm_found, session_type);
 		else
 			snprintf(out, cap, "%s", wm_found);
-		return;
-	}
-
-	if (de != NULL && de[0] != '\0') {
-		if (session_type != NULL && session_type[0] != '\0')
-			snprintf(out, cap, "%s (%s)", de, session_type);
-		else
-			snprintf(out, cap, "%s", de);
 		return;
 	}
 
@@ -1017,31 +1076,35 @@ count_nix_store(void)
 }
 
 static int
-count_flatpak_system(void)
+count_flatpak_dir(const char *path)
 {
 	DIR *dir;
 	struct dirent *ent;
 	int count = 0;
 
-	dir = opendir("/var/lib/flatpak/app");
-	if (dir != NULL) {
-		while ((ent = readdir(dir)) != NULL) {
-			if (ent->d_name[0] == '.')
-				continue;
-			count++;
-		}
-		closedir(dir);
+	dir = opendir(path);
+	if (dir == NULL)
+		return -1;
+	while ((ent = readdir(dir)) != NULL) {
+		if (ent->d_name[0] == '.')
+			continue;
+		count++;
 	}
+	closedir(dir);
+	return count;
+}
 
-	dir = opendir("/var/lib/flatpak/runtime");
-	if (dir != NULL) {
-		while ((ent = readdir(dir)) != NULL) {
-			if (ent->d_name[0] == '.')
-				continue;
-			count++;
-		}
-		closedir(dir);
-	}
+static int
+count_flatpak_system(void)
+{
+	int count = 0;
+	int apps = count_flatpak_dir("/var/lib/flatpak/app");
+	int runtimes = count_flatpak_dir("/var/lib/flatpak/runtime");
+
+	if (apps > 0)
+		count += apps;
+	if (runtimes > 0)
+		count += runtimes;
 	return count;
 }
 
@@ -1309,11 +1372,11 @@ count_homebrew_opt(void)
 static int
 count_homebrew(void)
 {
-	int cellar = count_homebrew_cellar();
+	int opt = count_homebrew_opt();
 
-	if (cellar > 0)
-		return cellar;
-	return count_homebrew_opt();
+	if (opt > 0)
+		return opt;
+	return count_homebrew_cellar();
 }
 
 static bool
@@ -1393,7 +1456,14 @@ collect_bedrock_packages(char *packages, size_t packages_cap)
 		}
 
 		snprintf(path, sizeof(path), "%s/var/lib/flatpak/app", root);
-		n = count_flatpak_system();
+		n = count_flatpak_dir(path);
+		if (n > 0) {
+			flatpak_total += n;
+			any = true;
+		}
+
+		snprintf(path, sizeof(path), "%s/var/lib/flatpak/runtime", root);
+		n = count_flatpak_dir(path);
 		if (n > 0) {
 			flatpak_total += n;
 			any = true;
@@ -1446,66 +1516,107 @@ detect_packages(const char *os_id, char *packages, size_t packages_cap)
 {
 	bool has_any = false;
 	bool is_bedrock = strcmp(os_id, "bedrock") == 0;
+	bool have_pacman = shitfetch_file_exists("/var/lib/pacman/local");
+	bool have_dpkg = shitfetch_file_exists("/var/lib/dpkg/status");
+	bool have_apk = shitfetch_file_exists("/lib/apk/db/installed");
+	bool have_xbps = shitfetch_file_exists("/var/db/xbps");
+	bool have_portage = shitfetch_file_exists("/var/db/pkg");
+	bool have_nix = shitfetch_file_exists("/nix/store");
+	bool have_flatpak_system = shitfetch_file_exists("/var/lib/flatpak/app") ||
+		shitfetch_file_exists("/var/lib/flatpak/runtime");
+	bool have_flatpak_user = false;
+	bool have_snap = shitfetch_file_exists("/var/lib/snapd/snaps") || shitfetch_file_exists("/snap");
+	bool have_homebrew = false;
+	const char *home = getenv("HOME");
 	char seg[64];
+	char path[SHITFETCH_MAX_PATH];
 	int count;
 
 	packages[0] = '\0';
 	if (is_bedrock && collect_bedrock_packages(packages, packages_cap))
 		return;
+	if (home == NULL)
+		home = "/root";
+	snprintf(path, sizeof(path), "%s/.local/share/flatpak/app", home);
+	have_flatpak_user = shitfetch_file_exists(path);
+	snprintf(path, sizeof(path), "%s/.linuxbrew/opt", home);
+	have_homebrew = shitfetch_file_exists(path) || shitfetch_file_exists("/home/linuxbrew/.linuxbrew/opt");
+	if (!have_homebrew) {
+		snprintf(path, sizeof(path), "%s/homebrew/opt", home);
+		have_homebrew = shitfetch_file_exists(path) || shitfetch_file_exists("/usr/local/opt");
+	}
 
-	count = count_pacman_local();
-	if (count > 0) {
-		snprintf(seg, sizeof(seg), "%d (pacman)", count);
-		append_pkg_segment(packages, packages_cap, seg);
-		has_any = true;
+	if (have_pacman) {
+		count = count_pacman_local();
+		if (count > 0) {
+			snprintf(seg, sizeof(seg), "%d (pacman)", count);
+			append_pkg_segment(packages, packages_cap, seg);
+			has_any = true;
+		}
 	}
-	count = count_dpkg_status();
-	if (count > 0) {
-		snprintf(seg, sizeof(seg), "%d (dpkg)", count);
-		append_pkg_segment(packages, packages_cap, seg);
-		has_any = true;
+	if (have_dpkg) {
+		count = count_dpkg_status();
+		if (count > 0) {
+			snprintf(seg, sizeof(seg), "%d (dpkg)", count);
+			append_pkg_segment(packages, packages_cap, seg);
+			has_any = true;
+		}
 	}
-	count = count_apk_installed();
-	if (count > 0) {
-		snprintf(seg, sizeof(seg), "%d (apk)", count);
-		append_pkg_segment(packages, packages_cap, seg);
-		has_any = true;
+	if (have_apk) {
+		count = count_apk_installed();
+		if (count > 0) {
+			snprintf(seg, sizeof(seg), "%d (apk)", count);
+			append_pkg_segment(packages, packages_cap, seg);
+			has_any = true;
+		}
 	}
-	count = count_xbps_db();
-	if (count > 0) {
-		snprintf(seg, sizeof(seg), "%d (xbps)", count);
-		append_pkg_segment(packages, packages_cap, seg);
-		has_any = true;
+	if (have_xbps) {
+		count = count_xbps_db();
+		if (count > 0) {
+			snprintf(seg, sizeof(seg), "%d (xbps)", count);
+			append_pkg_segment(packages, packages_cap, seg);
+			has_any = true;
+		}
 	}
-	count = count_portage_vardb();
-	if (count > 0) {
-		snprintf(seg, sizeof(seg), "%d (portage)", count);
-		append_pkg_segment(packages, packages_cap, seg);
-		has_any = true;
+	if (have_portage) {
+		count = count_portage_vardb();
+		if (count > 0) {
+			snprintf(seg, sizeof(seg), "%d (portage)", count);
+			append_pkg_segment(packages, packages_cap, seg);
+			has_any = true;
+		}
 	}
-	count = count_nix_store();
-	if (count > 0) {
-		snprintf(seg, sizeof(seg), "%d (nix)", count);
-		append_pkg_segment(packages, packages_cap, seg);
-		has_any = true;
+	if (have_nix) {
+		count = count_nix_store();
+		if (count > 0) {
+			snprintf(seg, sizeof(seg), "%d (nix)", count);
+			append_pkg_segment(packages, packages_cap, seg);
+			has_any = true;
+		}
 	}
-	count = count_flatpak();
-	if (count > 0) {
-		snprintf(seg, sizeof(seg), "%d (flatpak)", count);
-		append_pkg_segment(packages, packages_cap, seg);
-		has_any = true;
+	if (have_flatpak_system || have_flatpak_user) {
+		count = count_flatpak();
+		if (count > 0) {
+			snprintf(seg, sizeof(seg), "%d (flatpak)", count);
+			append_pkg_segment(packages, packages_cap, seg);
+			has_any = true;
+		}
 	}
-	count = count_snap();
-	if (count > 0) {
-		snprintf(seg, sizeof(seg), "%d (snap)", count);
-		append_pkg_segment(packages, packages_cap, seg);
-		has_any = true;
+	if (have_snap) {
+		count = count_snap();
+		if (count > 0) {
+			snprintf(seg, sizeof(seg), "%d (snap)", count);
+			append_pkg_segment(packages, packages_cap, seg);
+			has_any = true;
+		}
 	}
-	count = count_homebrew();
-	if (count > 0) {
-		snprintf(seg, sizeof(seg), "%d (homebrew)", count);
-		append_pkg_segment(packages, packages_cap, seg);
-		has_any = true;
+	if (have_homebrew) {
+		count = count_homebrew();
+		if (count > 0) {
+			snprintf(seg, sizeof(seg), "%d (homebrew)", count);
+			append_pkg_segment(packages, packages_cap, seg);
+			has_any = true;
+		}
 	}
 
 	if (!has_any) {
@@ -1652,9 +1763,91 @@ detect_display(char *id, size_t id_cap, char *out, size_t cap)
 		snprintf(out, cap, "unknown");
 }
 
+struct string_detect_task {
+	char *out;
+	size_t cap;
+	void (*fn)(char *, size_t);
+};
+
+struct packages_detect_task {
+	const char *os_id;
+	char *packages;
+	size_t packages_cap;
+};
+
+struct disks_detect_task {
+	const struct shitfetch_settings *settings;
+	struct shitfetch_data *data;
+};
+
+struct display_detect_task {
+	char *id;
+	size_t id_cap;
+	char *out;
+	size_t out_cap;
+};
+
+static void *
+run_string_detect(void *arg)
+{
+	struct string_detect_task *task = arg;
+
+	task->fn(task->out, task->cap);
+	return NULL;
+}
+
+static void *
+run_packages_detect(void *arg)
+{
+	struct packages_detect_task *task = arg;
+
+	detect_packages(task->os_id, task->packages, task->packages_cap);
+	return NULL;
+}
+
+static void *
+run_disks_detect(void *arg)
+{
+	struct disks_detect_task *task = arg;
+
+	detect_disks(task->settings, task->data);
+	return NULL;
+}
+
+static void *
+run_display_detect(void *arg)
+{
+	struct display_detect_task *task = arg;
+
+	detect_display(task->id, task->id_cap, task->out, task->out_cap);
+	return NULL;
+}
+
+static bool
+start_thread(pthread_t *thread, void *(*fn)(void *), void *arg)
+{
+	return pthread_create(thread, NULL, fn, arg) == 0;
+}
+
 void
 shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfetch_data *data)
 {
+	pthread_t dewm_thread;
+	pthread_t term_thread;
+	pthread_t disks_thread;
+	pthread_t packages_thread;
+	pthread_t display_thread;
+	bool dewm_started = false;
+	bool term_started = false;
+	bool disks_started = false;
+	bool packages_started = false;
+	bool display_started = false;
+	struct string_detect_task dewm_task;
+	struct string_detect_task term_task;
+	struct disks_detect_task disks_task;
+	struct packages_detect_task packages_task;
+	struct display_detect_task display_task;
+
 	memset(data, 0, sizeof(*data));
 
 	read_os_release(data->os_id, sizeof(data->os_id), data->os_pretty, sizeof(data->os_pretty));
@@ -1678,9 +1871,14 @@ shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfet
 	else
 		snprintf(data->shell, sizeof(data->shell), "unknown");
 
-	if (settings->module_enabled[SHITFETCH_MODULE_DEWM])
-		detect_dewm(data->dewm, sizeof(data->dewm));
-	else
+	if (settings->module_enabled[SHITFETCH_MODULE_DEWM]) {
+		dewm_task.out = data->dewm;
+		dewm_task.cap = sizeof(data->dewm);
+		dewm_task.fn = detect_dewm;
+		dewm_started = start_thread(&dewm_thread, run_string_detect, &dewm_task);
+		if (!dewm_started)
+			detect_dewm(data->dewm, sizeof(data->dewm));
+	} else
 		snprintf(data->dewm, sizeof(data->dewm), "unknown");
 
 	if (settings->module_enabled[SHITFETCH_MODULE_HOST])
@@ -1688,9 +1886,14 @@ shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfet
 	else
 		snprintf(data->host, sizeof(data->host), "unknown");
 
-	if (settings->module_enabled[SHITFETCH_MODULE_TERM])
-		detect_term(data->term, sizeof(data->term));
-	else
+	if (settings->module_enabled[SHITFETCH_MODULE_TERM]) {
+		term_task.out = data->term;
+		term_task.cap = sizeof(data->term);
+		term_task.fn = detect_term;
+		term_started = start_thread(&term_thread, run_string_detect, &term_task);
+		if (!term_started)
+			detect_term(data->term, sizeof(data->term));
+	} else
 		snprintf(data->term, sizeof(data->term), "unknown");
 
 	if (settings->module_enabled[SHITFETCH_MODULE_CPU])
@@ -1711,7 +1914,11 @@ shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfet
 	}
 
 	if (settings->module_enabled[SHITFETCH_MODULE_DISK]) {
-		detect_disks(settings, data);
+		disks_task.settings = settings;
+		disks_task.data = data;
+		disks_started = start_thread(&disks_thread, run_disks_detect, &disks_task);
+		if (!disks_started)
+			detect_disks(settings, data);
 	} else {
 		data->disk_count = 1;
 		snprintf(data->disk_mounts[0], sizeof(data->disk_mounts[0]), "/");
@@ -1719,17 +1926,39 @@ shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfet
 		snprintf(data->disk, sizeof(data->disk), "unknown");
 	}
 
-	if (settings->module_enabled[SHITFETCH_MODULE_PACKAGES])
-		detect_packages(data->os_id, data->packages, sizeof(data->packages));
-	else
+	if (settings->module_enabled[SHITFETCH_MODULE_PACKAGES]) {
+		packages_task.os_id = data->os_id;
+		packages_task.packages = data->packages;
+		packages_task.packages_cap = sizeof(data->packages);
+		packages_started = start_thread(&packages_thread, run_packages_detect, &packages_task);
+		if (!packages_started)
+			detect_packages(data->os_id, data->packages, sizeof(data->packages));
+	} else
 		snprintf(data->packages, sizeof(data->packages), "unknown");
 
 	if (settings->module_enabled[SHITFETCH_MODULE_DISPLAY]) {
-		detect_display(data->display_id, sizeof(data->display_id), data->display, sizeof(data->display));
+		display_task.id = data->display_id;
+		display_task.id_cap = sizeof(data->display_id);
+		display_task.out = data->display;
+		display_task.out_cap = sizeof(data->display);
+		display_started = start_thread(&display_thread, run_display_detect, &display_task);
+		if (!display_started)
+			detect_display(data->display_id, sizeof(data->display_id), data->display, sizeof(data->display));
 	} else {
 		snprintf(data->display_id, sizeof(data->display_id), "unknown");
 		snprintf(data->display, sizeof(data->display), "unknown");
 	}
+
+	if (dewm_started)
+		pthread_join(dewm_thread, NULL);
+	if (term_started)
+		pthread_join(term_thread, NULL);
+	if (disks_started)
+		pthread_join(disks_thread, NULL);
+	if (packages_started)
+		pthread_join(packages_thread, NULL);
+	if (display_started)
+		pthread_join(display_thread, NULL);
 
 	if (data->os_pretty[0] == '\0')
 		snprintf(data->os_pretty, sizeof(data->os_pretty), "unknown");

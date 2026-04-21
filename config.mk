@@ -6,5 +6,6 @@ CSTD ?= c11
 CPPFLAGS ?=
 CFLAGS ?= -O2 -pipe
 LDFLAGS ?=
-LDLIBS ?= -lm -ldrm
+CFLAGS += -pthread
+LDLIBS ?= -lm -ldrm -pthread
 CFLAGS += $(shell pkg-config --cflags libdrm)
