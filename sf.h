@@ -26,10 +26,6 @@ enum shitfetch_entry_kind {
 #define SHITFETCH_ASCII_DIR "/usr/local/share/shitfetch/ascii"
 #endif
 
-#ifndef SHITFETCH_SYSTEM_CONFIG
-#define SHITFETCH_SYSTEM_CONFIG ""
-#endif
-
 enum shitfetch_module {
 	SHITFETCH_MODULE_OS,
 	SHITFETCH_MODULE_KERNEL,
@@ -119,9 +115,6 @@ struct shitfetch_data {
 };
 
 void shitfetch_settings_init(struct shitfetch_settings *settings);
-bool shitfetch_load_config(struct shitfetch_settings *settings, const char *path);
-bool shitfetch_load_default_configs(struct shitfetch_settings *settings);
-bool shitfetch_generate_config(const struct shitfetch_settings *settings);
 
 void shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfetch_data *data);
 
@@ -137,8 +130,5 @@ void shitfetch_render(const struct shitfetch_settings *settings,
 	const struct shitfetch_logo_line *logo_lines, size_t logo_count,
 	const struct shitfetch_info_line *info_lines, size_t info_count,
 	const char *key_color);
-
-const char *shitfetch_module_name(enum shitfetch_module module);
-bool shitfetch_module_from_name(const char *name, enum shitfetch_module *out);
 
 #endif
