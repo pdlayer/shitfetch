@@ -1,3 +1,4 @@
 build/
 shitfetch
 *.o
+*.pkg.tar.zst
