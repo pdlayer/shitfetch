@@ -1,7 +1,8 @@
 include config.mk
 
-TARGET = shitfetch
 BUILD_DIR = build
+TARGET_NAME = shitfetch
+TARGET = $(BUILD_DIR)/$(TARGET_NAME)
 OBJ = \
 	$(BUILD_DIR)/sf.o \
 	$(BUILD_DIR)/sfdetect.o \
@@ -31,11 +32,11 @@ $(BUILD_DIR)/sflogo.o: sflogo.c sf.h sfascii.h sfansi.h sfcolor.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET)
+	rm -rf $(BUILD_DIR)
 
 install: $(TARGET)
 	install -d $(DESTDIR)$(PREFIX)/bin
-	install -m 755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/$(TARGET)
+	install -m 755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/$(TARGET_NAME)
 
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/bin/$(TARGET)
+	rm -f $(DESTDIR)$(PREFIX)/bin/$(TARGET_NAME)

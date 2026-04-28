@@ -1651,6 +1651,59 @@ get_monitor_name(const unsigned char *edid, char *out, size_t cap)
 }
 
 static void
+format_display_mode(const drmModeModeInfo *mode, drmModeConnector *conn, char *out, size_t cap)
+{
+	double vrefresh;
+	bool is_internal;
+	double inches = 0;
+
+	if (!mode || !conn || !out || cap == 0)
+		return;
+
+	vrefresh = mode->vrefresh;
+	if (vrefresh == 0 && mode->clock > 0 && mode->htotal > 0 && mode->vtotal > 0)
+		vrefresh = (double)mode->clock * 1000.0 / (mode->htotal * mode->vtotal);
+
+	is_internal = conn->connector_type == DRM_MODE_CONNECTOR_eDP ||
+		conn->connector_type == DRM_MODE_CONNECTOR_LVDS ||
+		conn->connector_type == DRM_MODE_CONNECTOR_DSI;
+
+	if (conn->mmWidth > 0 && conn->mmHeight > 0) {
+		double w = (double)conn->mmWidth / 25.4;
+		double h = (double)conn->mmHeight / 25.4;
+		inches = sqrt(w * w + h * h);
+	}
+
+	if (inches > 0) {
+		snprintf(out, cap, "%dx%d@%.0fHz, %.1f\" [%s]",
+			mode->hdisplay, mode->vdisplay, round(vrefresh), inches,
+			is_internal ? "Internal" : "External");
+	} else {
+		snprintf(out, cap, "%dx%d@%.0fHz, ?\" [%s]",
+			mode->hdisplay, mode->vdisplay, round(vrefresh),
+			is_internal ? "Internal" : "External");
+	}
+}
+
+static const drmModeModeInfo *
+pick_connector_mode(drmModeConnector *conn)
+{
+	const drmModeModeInfo *fallback = NULL;
+
+	if (!conn || conn->count_modes <= 0)
+		return NULL;
+
+	for (int i = 0; i < conn->count_modes; i++) {
+		if (conn->modes[i].type & DRM_MODE_TYPE_PREFERRED)
+			return &conn->modes[i];
+		if (!fallback)
+			fallback = &conn->modes[i];
+	}
+
+	return fallback;
+}
+
+static void
 detect_display(char *id, size_t id_cap, char *out, size_t cap)
 {
 	int fd;
@@ -1719,34 +1772,16 @@ detect_display(char *id, size_t id_cap, char *out, size_t cap)
 				if (enc) {
 					crtc = drmModeGetCrtc(fd, enc->crtc_id);
 					if (crtc && crtc->mode_valid) {
-						double vrefresh = crtc->mode.vrefresh;
-						if (vrefresh == 0 && crtc->mode.clock > 0 && crtc->mode.htotal > 0 && crtc->mode.vtotal > 0) {
-							vrefresh = (double)crtc->mode.clock * 1000.0 / (crtc->mode.htotal * crtc->mode.vtotal);
-						}
-						
-						bool is_internal = conn->connector_type == DRM_MODE_CONNECTOR_eDP ||
-						                  conn->connector_type == DRM_MODE_CONNECTOR_LVDS ||
-						                  conn->connector_type == DRM_MODE_CONNECTOR_DSI;
-
-						double inches = 0;
-						if (conn->mmWidth > 0 && conn->mmHeight > 0) {
-							double w = (double)conn->mmWidth / 25.4;
-							double h = (double)conn->mmHeight / 25.4;
-							inches = sqrt(w * w + h * h);
-						}
-
-	if (inches > 0) {
-		snprintf(out, cap, "%dx%d@%.0fHz, %.1f\" [%s]",
-			crtc->mode.hdisplay, crtc->mode.vdisplay,
-			round(vrefresh), inches, is_internal ? "Internal" : "External");
-	} else {
-		snprintf(out, cap, "%dx%d@%.0fHz, ?\" [%s]",
-			crtc->mode.hdisplay, crtc->mode.vdisplay,
-			round(vrefresh), is_internal ? "Internal" : "External");
-	}
+						format_display_mode(&crtc->mode, conn, out, cap);
 						drmModeFreeCrtc(crtc);
 					}
 					drmModeFreeEncoder(enc);
+				}
+				if (out[0] == '\0') {
+					const drmModeModeInfo *mode = pick_connector_mode(conn);
+
+					if (mode)
+						format_display_mode(mode, conn, out, cap);
 				}
 				drmModeFreeConnector(conn);
 				found = true;
