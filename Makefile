@@ -10,7 +10,8 @@ OBJ = \
 	$(BUILD_DIR)/sfrender.o \
 	$(BUILD_DIR)/sfutil.o \
 	$(BUILD_DIR)/sfansi.o \
-	$(BUILD_DIR)/sfcolor.o
+	$(BUILD_DIR)/sfcolor.o \
+	$(BUILD_DIR)/sfminiansi.o
 
 CPPFLAGS += -DSHITFETCH_ASCII_DIR='"/usr/local/share/shitfetch/ascii"'
 CFLAGS += -std=$(CSTD) -Wall -Wextra -Wpedantic -Wno-trigraphs -Wno-format-truncation
@@ -28,7 +29,7 @@ $(BUILD_DIR):
 $(BUILD_DIR)/%.o: %.c sf.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/sflogo.o: sflogo.c sf.h sfascii.h sfansi.h sfcolor.h | $(BUILD_DIR)
+$(BUILD_DIR)/sflogo.o: sflogo.c sf.h sfascii.h sfminiascii.h sfansi.h sfcolor.h sfminiansi.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 clean:

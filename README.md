@@ -31,6 +31,7 @@ make
 ./shitfetch
 ./shitfetch --logo arch
 ./shitfetch --logo none
+./shitfetch --template mini
 ```
 
 Install/uninstall:
@@ -50,6 +51,10 @@ Install places:
 - `-h`, `--help`
 - `-v`, `--version`
 - `-l`, `--logo <name>`
+- `-t`, `--template <default|mini>`
+
+`mini` uses small `pfetch`-style logos and shows `os`, `kernel`, `init`,
+`wm/de`, `pkgs`, `shell`, and `memory`.
 
 ## Notes
 

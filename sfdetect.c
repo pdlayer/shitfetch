@@ -611,8 +611,8 @@ detect_memory_swap(char *mem_out, size_t mem_cap, char *swap_out, size_t swap_ca
 	unsigned long long swap_total = 0;
 	unsigned long long free_kib = 0;
 	unsigned long long used;
-	double used_gib;
-	double total_gib;
+	unsigned long long used_mb;
+	unsigned long long total_mb;
 	unsigned int percent;
 
 	mem_out[0] = '\0';
@@ -651,23 +651,23 @@ detect_memory_swap(char *mem_out, size_t mem_cap, char *swap_out, size_t swap_ca
 		if (mem_avail > mem_total)
 			mem_avail = 0;
 		used = mem_total - mem_avail;
-		used_gib = (double)used / (1024.0 * 1024.0);
-		total_gib = (double)mem_total / (1024.0 * 1024.0);
+		used_mb = used / 1024ULL;
+		total_mb = mem_total / 1024ULL;
 		percent = (unsigned int)((used * 100ULL) / mem_total);
-		snprintf(mem_out, mem_cap, "%.1f / %.1f GiB (%%{%u})", used_gib, total_gib, percent);
+		snprintf(mem_out, mem_cap, "%lluMB / %lluMB (%%{%u})", used_mb, total_mb, percent);
 	}
 
 	if (swap_total == 0) {
-		snprintf(swap_out, swap_cap, "0.0 / 0.0 GiB (%%{0})");
+		snprintf(swap_out, swap_cap, "0MB / 0MB (%%{0})");
 		return;
 	}
 	if (free_kib > swap_total)
 		free_kib = 0;
 	used = swap_total - free_kib;
-	used_gib = (double)used / (1024.0 * 1024.0);
-	total_gib = (double)swap_total / (1024.0 * 1024.0);
+	used_mb = used / 1024ULL;
+	total_mb = swap_total / 1024ULL;
 	percent = (unsigned int)((used * 100ULL) / swap_total);
-	snprintf(swap_out, swap_cap, "%.1f / %.1f GiB (%%{%u})", used_gib, total_gib, percent);
+	snprintf(swap_out, swap_cap, "%lluMB / %lluMB (%%{%u})", used_mb, total_mb, percent);
 }
 
 static void

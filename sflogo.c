@@ -3,8 +3,10 @@
 #include "sf.h"
 #include "sfcolor.h"
 #include "sfansi.h"
+#include "sfminiansi.h"
 #include "sfutil.h"
 #include "sfascii.h"
+#include "sfminiascii.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -28,18 +30,38 @@ normalize_logo_name(const char *src, char *dst, size_t cap)
 }
 
 static const char *
-find_logo_text(const struct shitfetch_settings *settings, const char *name, char **file_buf)
+find_builtin_logo_text(const struct shitfetch_settings *settings, const char *name)
 {
 	size_t i;
+
+	if (settings->template == SHITFETCH_TEMPLATE_MINI) {
+		for (i = 0; i < sfmini_ascii_entries_count; i++) {
+			if (strcmp(sfmini_ascii_entries[i].name, name) == 0)
+				return sfmini_ascii_entries[i].text;
+		}
+	} else {
+		for (i = 0; i < sfascii_entries_count; i++) {
+			if (strcmp(sfascii_entries[i].name, name) == 0)
+				return sfascii_entries[i].text;
+		}
+	}
+
+	return NULL;
+}
+
+static const char *
+find_logo_text(const struct shitfetch_settings *settings, const char *name, char **file_buf)
+{
+	const char *builtin;
 	char path[SHITFETCH_MAX_PATH];
 	FILE *fp;
 
-	if (file_buf) *file_buf = NULL;
+	if (file_buf)
+		*file_buf = NULL;
 
-	for (i = 0; i < sfascii_entries_count; i++) {
-		if (strcmp(sfascii_entries[i].name, name) == 0)
-			return sfascii_entries[i].text;
-	}
+	builtin = find_builtin_logo_text(settings, name);
+	if (builtin != NULL)
+		return builtin;
 
 	snprintf(path, sizeof(path), "%s/%s", settings->ascii_dir, name);
 	fp = fopen(path, "r");
@@ -60,6 +82,15 @@ find_logo_text(const struct shitfetch_settings *settings, const char *name, char
 	}
 
 	return NULL;
+}
+
+static void
+palette_for_logo(const struct shitfetch_settings *settings, const char *logo_name, const char *out[9])
+{
+	if (settings->template == SHITFETCH_TEMPLATE_MINI)
+		sfmini_palette_for_os(logo_name, out);
+	else
+		sfcolor_palette_for_os(logo_name, out);
 }
 
 static const char *
@@ -152,7 +183,7 @@ shitfetch_load_logo(const struct shitfetch_settings *settings, const char *os_id
 	if (logo_text == NULL)
 		return 0;
 
-	sfcolor_palette_for_os(logo_name, logo_colors);
+	palette_for_logo(settings, logo_name, logo_colors);
 	if (settings->logo_color_spec[0] != '\0' &&
 		sfcolor_resolve(settings->logo_color_spec, logo_colors[0], logo_color, sizeof(logo_color))) {
 		for (i = 0; i < 9; i++)
@@ -210,7 +241,7 @@ shitfetch_logo_main_color(const struct shitfetch_settings *settings, const char 
 		normalize_logo_name(settings->logo, logo_name, sizeof(logo_name));
 
 	logo_text = find_logo_text(settings, logo_name, &file_buf);
-	sfcolor_palette_for_os(logo_name, logo_colors);
+	palette_for_logo(settings, logo_name, logo_colors);
 
 	const char *chosen = logo_main_color_from_text(logo_text, logo_colors);
 

@@ -230,7 +230,7 @@ add_line(struct shitfetch_info_line *lines, size_t *count, size_t cap, const cha
 		return;
 	apply_template(fmt, value, templ, sizeof(templ));
 	format_value(value_fmt, sizeof(value_fmt), templ, value_color);
-	int n = snprintf(lines[*count].text, sizeof(lines[*count].text), "\033[%sm%s\033[0m%s\033[%sm%s\033[0m",
+	int n = snprintf(lines[*count].text, sizeof(lines[*count].text), "\033[1;%sm%s\033[0m%s\033[%sm%s\033[0m",
 		key_color, key, separator, value_color, value_fmt);
 	if (n < 0 || (size_t)n >= sizeof(lines[*count].text)) {
 		// Truncated, but at least we tried
@@ -282,35 +282,35 @@ default_module_key(enum shitfetch_module module)
 {
 	switch (module) {
 	case SHITFETCH_MODULE_OS:
-		return "OS";
+		return "os";
 	case SHITFETCH_MODULE_KERNEL:
-		return "Kernel";
+		return "kernel";
 	case SHITFETCH_MODULE_INIT:
-		return "Init";
+		return "init";
 	case SHITFETCH_MODULE_UPTIME:
-		return "Uptime";
+		return "uptime";
 	case SHITFETCH_MODULE_HOST:
-		return "Host";
+		return "host";
 	case SHITFETCH_MODULE_SHELL:
-		return "Shell";
+		return "shell";
 	case SHITFETCH_MODULE_DEWM:
-		return "WM/DE";
+		return "wm/de";
 	case SHITFETCH_MODULE_TERM:
-		return "Terminal";
+		return "terminal";
 	case SHITFETCH_MODULE_CPU:
-		return "CPU";
+		return "cpu";
 	case SHITFETCH_MODULE_GPU:
-		return "GPU";
+		return "gpu";
 	case SHITFETCH_MODULE_MEMORY:
-		return "Memory";
+		return "memory";
 	case SHITFETCH_MODULE_SWAP:
-		return "Swap";
+		return "swap";
 	case SHITFETCH_MODULE_DISK:
-		return "Disk";
+		return "disk";
 	case SHITFETCH_MODULE_PACKAGES:
-		return "Packages";
+		return "pkgs";
 	case SHITFETCH_MODULE_DISPLAY:
-		return "Display";
+		return "display";
 	default:
 		return "unknown";
 	}
@@ -493,7 +493,8 @@ shitfetch_render(const struct shitfetch_settings *settings,
 	size_t rows;
 	size_t max_logo = 0;
 	size_t ansi_rows = 0;
-	size_t header_rows = settings->show_header ? 2 : 0;
+	size_t header_rows = settings->show_header ?
+		(settings->template == SHITFETCH_TEMPLATE_MINI ? 1 : 2) : 0;
 	char identity_user[128];
 	char identity_host[128];
 	size_t dash_len;
@@ -527,7 +528,7 @@ shitfetch_render(const struct shitfetch_settings *settings,
 		sfcolor_resolve(settings->border_color_spec, key_color, border_color, sizeof(border_color)))
 		effective_border_color = border_color;
 	build_identity(identity_user, sizeof(identity_user), identity_host, sizeof(identity_host));
-	dash_len = strlen(identity_user) + 3 + strlen(identity_host);
+	dash_len = strlen(identity_user) + 1 + strlen(identity_host);
 	if (dash_len >= sizeof(dash))
 		dash_len = sizeof(dash) - 1;
 	memset(dash, '-', dash_len);
@@ -541,7 +542,8 @@ shitfetch_render(const struct shitfetch_settings *settings,
 
 		if (i < logo_count)
 			fputs(logo_lines[i].text, stdout);
-		if (settings->show_header && i < logo_count && i < header_rows) {
+		if (settings->show_header && i < logo_count && i < header_rows &&
+			(settings->template != SHITFETCH_TEMPLATE_MINI || i == 0)) {
 			size_t pad;
 
 			pad = max_logo > logo_lines[i].visible_len ? max_logo - logo_lines[i].visible_len : 0;
@@ -550,18 +552,19 @@ shitfetch_render(const struct shitfetch_settings *settings,
 				printf("\033[1;%sm", effective_header_color);
 				fputs(identity_user, stdout);
 				fputs("\033[0m", stdout);
-				printf(" & %s", identity_host);
+				printf("@%s", identity_host);
 			} else {
 				printf("\033[%sm%s\033[0m", effective_border_color, dash);
 			}
-		} else if (settings->show_header && i >= logo_count && i < header_rows) {
+		} else if (settings->show_header && i >= logo_count && i < header_rows &&
+			(settings->template != SHITFETCH_TEMPLATE_MINI || i == 0)) {
 			if (logo_count > 0)
 				printf("%*s", (int)max_logo + 2, "");
 			if (i == 0) {
 				printf("\033[1;%sm", effective_header_color);
 				fputs(identity_user, stdout);
 				fputs("\033[0m", stdout);
-				printf(" & %s", identity_host);
+				printf("@%s", identity_host);
 			} else {
 				printf("\033[%sm%s\033[0m", effective_border_color, dash);
 			}

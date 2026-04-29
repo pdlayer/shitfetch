@@ -45,7 +45,13 @@ enum shitfetch_module {
 	SHITFETCH_MODULE_COUNT,
 };
 
+enum shitfetch_template {
+	SHITFETCH_TEMPLATE_DEFAULT,
+	SHITFETCH_TEMPLATE_MINI,
+};
+
 struct shitfetch_settings {
+	enum shitfetch_template template;
 	bool show_logo;
 	bool show_header;
 	char logo[64];
