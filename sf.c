@@ -1,6 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "sf.h"
+#include "sfconfig.h"
+#include "sfutil.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -26,9 +28,30 @@ static int
 append_module(struct shitfetch_settings *settings, enum shitfetch_module module);
 
 static void
-apply_template_mini(struct shitfetch_settings *settings)
+apply_template_order(struct shitfetch_settings *settings, enum shitfetch_template template,
+	const enum shitfetch_module *order, size_t count, bool show_ansi)
 {
 	size_t i;
+
+	settings->template = template;
+	settings->show_header = true;
+	settings->show_ansi = show_ansi;
+	settings->entry_count = 0;
+	settings->module_count = count;
+
+	for (i = 0; i < SHITFETCH_MODULE_COUNT; i++)
+		settings->module_enabled[i] = false;
+	for (i = 0; i < settings->module_count; i++) {
+		settings->module_order[i] = order[i];
+		settings->module_enabled[order[i]] = true;
+		(void)append_module(settings, order[i]);
+	}
+}
+
+void
+shitfetch_settings_apply_template(struct shitfetch_settings *settings,
+	enum shitfetch_template template)
+{
 	static const enum shitfetch_module mini_order[] = {
 		SHITFETCH_MODULE_OS,
 		SHITFETCH_MODULE_KERNEL,
@@ -39,19 +62,14 @@ apply_template_mini(struct shitfetch_settings *settings)
 		SHITFETCH_MODULE_MEMORY,
 	};
 
-	settings->template = SHITFETCH_TEMPLATE_MINI;
-	settings->show_header = true;
-	settings->show_ansi = false;
-	settings->entry_count = 0;
-	settings->module_count = sizeof(mini_order) / sizeof(mini_order[0]);
-
-	for (i = 0; i < SHITFETCH_MODULE_COUNT; i++)
-		settings->module_enabled[i] = false;
-	for (i = 0; i < settings->module_count; i++) {
-		settings->module_order[i] = mini_order[i];
-		settings->module_enabled[mini_order[i]] = true;
-		(void)append_module(settings, mini_order[i]);
+	if (template == SHITFETCH_TEMPLATE_MINI) {
+		apply_template_order(settings, SHITFETCH_TEMPLATE_MINI, mini_order,
+			sizeof(mini_order) / sizeof(mini_order[0]), false);
+		return;
 	}
+
+	apply_template_order(settings, SHITFETCH_TEMPLATE_DEFAULT, default_order,
+		sizeof(default_order) / sizeof(default_order[0]), true);
 }
 
 static int
@@ -62,6 +80,7 @@ append_module(struct shitfetch_settings *settings, enum shitfetch_module module)
 	if (settings->entry_count >= SHITFETCH_MAX_MODULE_ENTRIES)
 		return -1;
 	idx = settings->entry_count++;
+	memset(&settings->entries[idx], 0, sizeof(settings->entries[idx]));
 	settings->entries[idx].kind = SHITFETCH_ENTRY_MODULE;
 	settings->entries[idx].module = module;
 	settings->entries[idx].enabled = true;
@@ -71,8 +90,6 @@ append_module(struct shitfetch_settings *settings, enum shitfetch_module module)
 void
 shitfetch_settings_init(struct shitfetch_settings *settings)
 {
-	size_t i;
-
 	memset(settings, 0, sizeof(*settings));
 	settings->template = SHITFETCH_TEMPLATE_DEFAULT;
 	settings->show_logo = true;
@@ -87,14 +104,7 @@ shitfetch_settings_init(struct shitfetch_settings *settings)
 	settings->disk_show_fs = true;
 	snprintf(settings->ascii_dir, sizeof(settings->ascii_dir), "%s", SHITFETCH_ASCII_DIR);
 
-	for (i = 0; i < SHITFETCH_MODULE_COUNT; i++)
-		settings->module_enabled[i] = true;
-	settings->module_count = sizeof(default_order) / sizeof(default_order[0]);
-	for (i = 0; i < settings->module_count; i++)
-		settings->module_order[i] = default_order[i];
-	settings->entry_count = 0;
-	for (i = 0; i < settings->module_count; i++)
-		(void)append_module(settings, settings->module_order[i]);
+	shitfetch_settings_apply_template(settings, SHITFETCH_TEMPLATE_DEFAULT);
 }
 
 static void
@@ -110,6 +120,8 @@ print_help(FILE *out)
 	fputs("  -v, --version     show version\n", out);
 	fputs("  -l, --logo NAME   set logo name (or none)\n", out);
 	fputs("  -t, --template    set template (default or mini)\n", out);
+	fputs("  -c, --config PATH load config file\n", out);
+	fputs("      --no-config   skip automatic config loading\n", out);
 }
 
 int
@@ -123,6 +135,14 @@ main(int argc, char **argv)
 	size_t logo_count;
 	size_t info_count;
 	enum shitfetch_template requested_template = SHITFETCH_TEMPLATE_DEFAULT;
+	bool template_set = false;
+	char requested_logo[64];
+	bool logo_set = false;
+	const char *config_path = NULL;
+	bool explicit_config = false;
+	bool load_config = true;
+	char default_config[SHITFETCH_MAX_PATH];
+	char config_err[512];
 	int i;
 
 	shitfetch_settings_init(&settings);
@@ -141,13 +161,13 @@ main(int argc, char **argv)
 				fprintf(stderr, "shitfetch: missing value for %s\n", argv[i]);
 				return 1;
 			}
-			snprintf(settings.logo, sizeof(settings.logo), "%s", argv[++i]);
-			settings.show_logo = strcmp(settings.logo, "none") != 0;
+			snprintf(requested_logo, sizeof(requested_logo), "%s", argv[++i]);
+			logo_set = true;
 			continue;
 		}
 		if (strncmp(argv[i], "--logo=", 7) == 0) {
-			snprintf(settings.logo, sizeof(settings.logo), "%s", argv[i] + 7);
-			settings.show_logo = strcmp(settings.logo, "none") != 0;
+			snprintf(requested_logo, sizeof(requested_logo), "%s", argv[i] + 7);
+			logo_set = true;
 			continue;
 		}
 		if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--template") == 0) {
@@ -158,11 +178,13 @@ main(int argc, char **argv)
 				return 1;
 			}
 			value = argv[++i];
-			if (strcmp(value, "default") == 0)
+			if (strcmp(value, "default") == 0) {
 				requested_template = SHITFETCH_TEMPLATE_DEFAULT;
-			else if (strcmp(value, "mini") == 0)
+				template_set = true;
+			} else if (strcmp(value, "mini") == 0) {
 				requested_template = SHITFETCH_TEMPLATE_MINI;
-			else {
+				template_set = true;
+			} else {
 				fprintf(stderr, "shitfetch: unknown template: %s\n", value);
 				return 1;
 			}
@@ -171,14 +193,38 @@ main(int argc, char **argv)
 		if (strncmp(argv[i], "--template=", 11) == 0) {
 			const char *value = argv[i] + 11;
 
-			if (strcmp(value, "default") == 0)
+			if (strcmp(value, "default") == 0) {
 				requested_template = SHITFETCH_TEMPLATE_DEFAULT;
-			else if (strcmp(value, "mini") == 0)
+				template_set = true;
+			} else if (strcmp(value, "mini") == 0) {
 				requested_template = SHITFETCH_TEMPLATE_MINI;
-			else {
+				template_set = true;
+			} else {
 				fprintf(stderr, "shitfetch: unknown template: %s\n", value);
 				return 1;
 			}
+			continue;
+		}
+		if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) {
+			if (i + 1 >= argc) {
+				fprintf(stderr, "shitfetch: missing value for %s\n", argv[i]);
+				return 1;
+			}
+			config_path = argv[++i];
+			explicit_config = true;
+			load_config = true;
+			continue;
+		}
+		if (strncmp(argv[i], "--config=", 9) == 0) {
+			config_path = argv[i] + 9;
+			explicit_config = true;
+			load_config = true;
+			continue;
+		}
+		if (strcmp(argv[i], "--no-config") == 0) {
+			config_path = NULL;
+			explicit_config = false;
+			load_config = false;
 			continue;
 		}
 
@@ -187,8 +233,24 @@ main(int argc, char **argv)
 		return 1;
 	}
 
-	if (requested_template == SHITFETCH_TEMPLATE_MINI)
-		apply_template_mini(&settings);
+	if (load_config) {
+		if (!explicit_config && shitfetch_default_config_path(default_config, sizeof(default_config)) &&
+			shitfetch_file_exists(default_config)) {
+			config_path = default_config;
+		}
+		if (config_path != NULL &&
+			shitfetch_load_config(&settings, config_path, config_err, sizeof(config_err)) < 0) {
+			fprintf(stderr, "shitfetch: config: %s\n", config_err);
+			return 1;
+		}
+	}
+
+	if (template_set)
+		shitfetch_settings_apply_template(&settings, requested_template);
+	if (logo_set) {
+		snprintf(settings.logo, sizeof(settings.logo), "%s", requested_logo);
+		settings.show_logo = strcmp(settings.logo, "none") != 0;
+	}
 
 	shitfetch_collect_data(&settings, &data);
 	logo_count = shitfetch_load_logo(&settings, data.os_id, logo_lines, SHITFETCH_MAX_LOGO_LINES);

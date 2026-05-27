@@ -4,7 +4,7 @@ pkgrel=1
 pkgdesc='minimal linux fetch'
 arch=('x86_64')
 url='https://github.com/pdlayer/shitfetch'
-license=('ISC')
+license=('BSD-3-Clause-Clear')
 depends=('libdrm')
 makedepends=('pkgconf')
 source=()
@@ -19,4 +19,5 @@ package() {
 	install -Dm644 "$startdir/shitfetch.bash" "$pkgdir/usr/share/bash-completion/completions/shitfetch"
 	install -Dm644 "$startdir/shitfetch.fish" "$pkgdir/usr/share/fish/vendor_completions.d/shitfetch.fish"
 	install -Dm644 "$startdir/shitfetch.zsh" "$pkgdir/usr/share/zsh/site-functions/_shitfetch"
+	install -Dm644 "$startdir/LICENSE" "$pkgdir/usr/share/licenses/shitfetch/LICENSE"
 }

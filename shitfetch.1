@@ -1,0 +1,146 @@
+.TH SHITFETCH 1 "2026-05-26" "shitfetch 0.1.0" "General Commands Manual"
+.SH NAME
+shitfetch \- minimal Linux fetch
+.SH SYNOPSIS
+.B shitfetch
+[\fIoptions\fR]
+.SH DESCRIPTION
+.B shitfetch
+prints a compact system summary with an ASCII logo, hardware and session data,
+and a package count assembled from supported system package databases.
+.PP
+The program is Linux-only.
+.SH OPTIONS
+.TP
+.B \-h, \-\-help
+Show command-line help and exit.
+.TP
+.B \-v, \-\-version
+Show the program version and exit.
+.TP
+.BI \-l ", " \-\-logo " NAME"
+Select a logo by name. Use
+.B none
+to disable logo output.
+.TP
+.BI \-\-logo= NAME
+Equivalent to
+.BR "\-l NAME" .
+.TP
+.BI \-t ", " \-\-template " TEMPLATE"
+Select the output template. Supported values are
+.B default
+and
+.BR mini .
+.TP
+.BI \-\-template= TEMPLATE
+Equivalent to
+.BR "\-t TEMPLATE" .
+.TP
+.BI \-c ", " \-\-config " PATH"
+Load configuration from
+.IR PATH .
+.TP
+.BI \-\-config= PATH
+Equivalent to
+.BR "\-c PATH" .
+.TP
+.B \-\-no\-config
+Disable automatic configuration lookup.
+.SH CONFIGURATION
+If automatic configuration loading is enabled,
+.B shitfetch
+looks for:
+.IP \(bu 2
+\fB$XDG_CONFIG_HOME/shitfetch/config.jsonc\fR
+.IP \(bu 2
+\fB$HOME/.config/shitfetch/config.jsonc\fR when
+.B XDG_CONFIG_HOME
+is not set
+.PP
+See
+.BR shitfetch (5)
+for the configuration format.
+.SH TEMPLATES
+.TP
+.B default
+Shows the full default module set and ANSI color block.
+.TP
+.B mini
+Uses compact logos and a reduced module set:
+.BR os ,
+.BR kernel ,
+.BR init ,
+.BR wm/de ,
+.BR pkgs ,
+.BR shell ,
+and
+.BR memory .
+.SH MODULES
+Built-in modules are:
+.BR os ,
+.BR kernel ,
+.BR init ,
+.BR uptime ,
+.BR host ,
+.BR shell ,
+.BR wm ,
+.BR term ,
+.BR cpu ,
+.BR gpu ,
+.BR memory ,
+.BR swap ,
+.BR disk ,
+.BR packages ,
+and
+.BR display .
+.PP
+Aliases include
+.BR dewm ,
+.BR wm/de ,
+.BR terminal ,
+and
+.BR pkgs .
+.SH PACKAGE DETECTION
+The
+.B packages
+module currently supports these system package managers:
+.BR pacman ,
+.BR dpkg ,
+.BR apk ,
+.BR xbps ,
+.BR pkgtools ,
+.BR scratchpkg ,
+.BR paludis ,
+.BR portage ,
+.BR sorcery ,
+.BR kiss ,
+.BR opkg ,
+.BR eopkg ,
+.BR nix ,
+.BR flatpak ,
+.BR snap ,
+and
+.BR homebrew .
+.PP
+Counts are taken from local package database state only; language-specific
+package managers are intentionally ignored.
+.SH FILES
+.TP
+.B ~/.config/shitfetch/config.jsonc
+Default per-user configuration file when
+.B XDG_CONFIG_HOME
+is unset.
+.TP
+.B $XDG_CONFIG_HOME/shitfetch/config.jsonc
+Preferred per-user configuration file.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Invalid arguments, invalid configuration, or runtime failure.
+.SH SEE ALSO
+.BR shitfetch (5),
+.BR shitfetch (7)

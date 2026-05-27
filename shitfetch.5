@@ -1,0 +1,176 @@
+.TH SHITFETCH 5 "2026-05-26" "shitfetch 0.1.0" "File Formats Manual"
+.SH NAME
+shitfetch \- configuration format for shitfetch
+.SH SYNOPSIS
+.B $XDG_CONFIG_HOME/shitfetch/config.jsonc
+.br
+.B $HOME/.config/shitfetch/config.jsonc
+.SH DESCRIPTION
+.B shitfetch
+reads a strict JSONC configuration file.
+Unknown keys, invalid module names, invalid colors, and wrong value types are
+treated as errors.
+.SH TOP-LEVEL KEYS
+.TP
+.B template
+String. Either
+.B default
+or
+.BR mini .
+.TP
+.B logo
+String. Logo name or
+.BR auto .
+.TP
+.B header
+Boolean. Enables or disables the header line.
+.TP
+.B ansi
+Boolean. Enables or disables the ANSI color block.
+.TP
+.B separator
+String. Separator between keys and values.
+.TP
+.B asciiDir
+String. Override the ASCII logo directory.
+.TP
+.B colors
+Object. Global color selection.
+.TP
+.B modules
+Array of strings. Enables modules and defines module order when
+.B entries
+is not present.
+.TP
+.B entries
+Array of objects. Full custom render layout.
+.TP
+.B disk
+Object. Disk output controls.
+.SH COLORS OBJECT
+Supported keys:
+.BR key ,
+.BR value ,
+.BR header ,
+.BR border ,
+.BR custom ,
+and
+.BR logo .
+.PP
+Values may use named colors accepted by
+.B shitfetch
+or the special value
+.B logo
+for logo-derived color selection.
+.SH MODULES ARRAY
+Recognized module names:
+.BR os ,
+.BR kernel ,
+.BR init ,
+.BR uptime ,
+.BR host ,
+.BR shell ,
+.BR wm ,
+.BR term ,
+.BR cpu ,
+.BR gpu ,
+.BR memory ,
+.BR swap ,
+.BR disk ,
+.BR packages ,
+.BR display ,
+and
+.BR colors .
+.PP
+Aliases include
+.BR dewm ,
+.BR wm/de ,
+.BR terminal ,
+and
+.BR pkgs .
+.SH ENTRIES ARRAY
+Each array element is an object with exactly one primary action key:
+.TP
+.B module
+Render a module value.
+.TP
+.B break
+Insert a blank line. Must be
+.BR true .
+.TP
+.B separator
+Render literal separator text.
+.TP
+.B custom
+Render a custom string with placeholders.
+.TP
+.B colors
+Render the ANSI color block. Must be
+.BR true .
+.PP
+For module entries, these optional keys are supported:
+.BR key ,
+.BR keyColor ,
+and
+.BR format .
+.SH CUSTOM PLACEHOLDERS
+Custom entry strings may reference:
+.BR {user} ,
+.BR {host} ,
+.BR {os} ,
+.BR {kernel} ,
+.BR {init} ,
+.BR {uptime} ,
+.BR {shell} ,
+.BR {wm} ,
+.BR {term} ,
+.BR {cpu} ,
+.BR {gpu} ,
+.BR {memory} ,
+.BR {swap} ,
+.BR {disk} ,
+.BR {packages} ,
+and
+.BR {display} .
+.SH DISK OBJECT
+Supported keys:
+.TP
+.B all
+Boolean. Include all discovered mounts.
+.TP
+.B showFs
+Boolean. Include filesystem type in disk output.
+.TP
+.B mounts
+Array of mount-point strings used as an allow-list.
+.SH EXAMPLE
+.nf
+{
+  "template": "default",
+  "logo": "auto",
+  "header": true,
+  "ansi": true,
+  "separator": ": ",
+  "colors": {
+    "key": "logo",
+    "value": "default"
+  },
+  "modules": [
+    "os",
+    "kernel",
+    "init",
+    "packages",
+    "shell",
+    "display",
+    "memory"
+  ],
+  "disk": {
+    "all": true,
+    "showFs": true,
+    "mounts": ["/", "/home"]
+  }
+}
+.fi
+.SH SEE ALSO
+.BR shitfetch (1),
+.BR shitfetch (7)

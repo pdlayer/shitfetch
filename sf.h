@@ -11,6 +11,7 @@
 #define SHITFETCH_MAX_INFO_LINES 64
 #define SHITFETCH_MAX_LOGO_LINES 256
 #define SHITFETCH_MAX_DISKS 32
+#define SHITFETCH_MAX_GPUS 8
 #define SHITFETCH_MAX_DISK_FILTERS 16
 #define SHITFETCH_MAX_MODULE_ENTRIES 96
 
@@ -109,6 +110,9 @@ struct shitfetch_data {
 	char term[128];
 	char cpu[256];
 	char gpu[256];
+	size_t gpu_count;
+	char gpu_ids[SHITFETCH_MAX_GPUS][32];
+	char gpu_values[SHITFETCH_MAX_GPUS][256];
 	char memory[128];
 	char swap[128];
 	char disk[128];
@@ -121,6 +125,8 @@ struct shitfetch_data {
 };
 
 void shitfetch_settings_init(struct shitfetch_settings *settings);
+void shitfetch_settings_apply_template(struct shitfetch_settings *settings,
+	enum shitfetch_template template);
 
 void shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfetch_data *data);
 

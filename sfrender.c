@@ -405,6 +405,8 @@ shitfetch_build_info_lines(const struct shitfetch_settings *settings, const char
 		const char *entry_separator = settings->separator[0] ? settings->separator : ": ";
 		char entry_key_color_resolved[32];
 
+		if (!settings->entries[i].enabled)
+			continue;
 		if (settings->entries[i].kind == SHITFETCH_ENTRY_BREAK) {
 			if (count < cap) {
 				lines[count].text[0] = '\0';
@@ -444,7 +446,7 @@ shitfetch_build_info_lines(const struct shitfetch_settings *settings, const char
 		module = settings->entries[i].module;
 		if (module < 0 || module >= SHITFETCH_MODULE_COUNT)
 			continue;
-		if (!settings->entries[i].enabled || !settings->module_enabled[module])
+		if (!settings->module_enabled[module])
 			continue;
 		if (settings->entries[i].key_color_set && settings->entries[i].key_color[0] != '\0' &&
 			sfcolor_resolve(settings->entries[i].key_color, key_color,
@@ -463,6 +465,26 @@ shitfetch_build_info_lines(const struct shitfetch_settings *settings, const char
 					snprintf(key, sizeof(key), "%s (%s)", module_key(settings, module), data->disk_mounts[d]);
 				add_line(lines, &count, cap, entry_key_color, entry_separator, effective_value_color,
 					key, data->disk_values[d], settings->entries[i].format_set ? settings->entries[i].format : NULL);
+			}
+			continue;
+		}
+		if (module == SHITFETCH_MODULE_GPU) {
+			size_t g;
+			const char *gpu_key = settings->entries[i].key_set ?
+				settings->entries[i].key : module_key(settings, module);
+
+			if (data->gpu_count == 0) {
+				add_line(lines, &count, cap, entry_key_color, entry_separator, effective_value_color,
+					gpu_key,
+					module_value(module, data),
+					settings->entries[i].format_set ? settings->entries[i].format : NULL);
+				continue;
+			}
+
+			for (g = 0; g < data->gpu_count && count < cap; g++) {
+				add_line(lines, &count, cap, entry_key_color, entry_separator, effective_value_color,
+					gpu_key, data->gpu_values[g],
+					settings->entries[i].format_set ? settings->entries[i].format : NULL);
 			}
 			continue;
 		}

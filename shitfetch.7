@@ -1,0 +1,73 @@
+.TH SHITFETCH 7 "2026-05-26" "shitfetch 0.1.0" "Miscellaneous Information Manual"
+.SH NAME
+shitfetch \- overview, conventions, and notes
+.SH DESCRIPTION
+.B shitfetch
+is a small Linux fetch utility focused on straightforward local detection,
+simple output, and an easy-to-hack C11 codebase.
+.SH DESIGN NOTES
+.IP \(bu 2
+Linux-only by design.
+.IP \(bu 2
+Configuration uses strict JSONC parsing.
+.IP \(bu 2
+Package counting is based on local package database state.
+.IP \(bu 2
+Language-specific package managers such as
+.B npm
+and
+.B pip
+are intentionally excluded.
+.SH OUTPUT CONVENTIONS
+The
+.B packages
+module emits a comma-separated list when several package stores are detected,
+for example:
+.PP
+.RS
+1234 (dpkg), 18 (flatpak)
+.RE
+.PP
+System package managers are listed before universal stores such as
+.B flatpak
+and
+.BR snap .
+.SH PACKAGE MANAGER COVERAGE
+The current file-based coverage includes:
+.BR pacman ,
+.BR dpkg ,
+.BR apk ,
+.BR xbps ,
+.BR pkgtools ,
+.BR scratchpkg ,
+.BR paludis ,
+.BR portage ,
+.BR sorcery ,
+.BR kiss ,
+.BR opkg ,
+.BR eopkg ,
+.BR nix ,
+.BR flatpak ,
+.BR snap ,
+and
+.BR homebrew .
+.PP
+On Bedrock Linux,
+.B shitfetch
+aggregates package counts across supported strata-local databases.
+.SH ACKNOWLEDGEMENTS
+.B shitfetch
+includes ASCII artwork derived from or adapted from artwork used by
+.B fastfetch
+and
+.BR pfetch .
+Those projects are appreciated here specifically for that artwork lineage.
+.SH LICENSE
+.B shitfetch
+is distributed under the BSD 3-Clause Clear License.
+See the
+.B LICENSE
+file in the source tree for the full text.
+.SH SEE ALSO
+.BR shitfetch (1),
+.BR shitfetch (5)

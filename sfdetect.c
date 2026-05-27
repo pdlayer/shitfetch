@@ -1,25 +1,25 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE
 
-#include "sf.h"
+#include "sfdetect.h"
+#include "sfdetectgpu.h"
+#include "sfdetectpkgs.h"
+#include "sfdetectdisk.h"
+#include "sfdetectdisplay.h"
 #include "sfutil.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
-#include <pthread.h>
+#include <ctype.h>
+#include <threads.h>
 #include <dirent.h>
-#include <sys/statvfs.h>
 #include <sys/types.h>
 #include <sys/utsname.h>
-#include <xf86drm.h>
-#include <xf86drmMode.h>
-#include <fcntl.h>
 #include <time.h>
 #include <unistd.h>
 
-static void
+void
 read_first_line(const char *path, char *out, size_t cap)
 {
 	FILE *fp;
@@ -33,6 +33,39 @@ read_first_line(const char *path, char *out, size_t cap)
 	fclose(fp);
 	shitfetch_trim(out);
 }
+
+bool
+read_keyed_line(const char *path, const char *key, char *out, size_t cap)
+{
+	FILE *fp;
+	char line[256];
+	size_t key_len;
+
+	if (out == NULL || cap == 0)
+		return false;
+	out[0] = '\0';
+	if (path == NULL || key == NULL)
+		return false;
+
+	fp = fopen(path, "r");
+	if (fp == NULL)
+		return false;
+	key_len = strlen(key);
+	while (fgets(line, sizeof(line), fp) != NULL) {
+		char *value;
+
+		if (strncmp(line, key, key_len) != 0)
+			continue;
+		value = line + key_len;
+		shitfetch_trim(value);
+		snprintf(out, cap, "%s", value);
+		fclose(fp);
+		return true;
+	}
+	fclose(fp);
+	return false;
+}
+
 
 static int
 read_proc_stat(pid_t pid, char *comm, size_t comm_cap, pid_t *ppid_out)
@@ -97,6 +130,43 @@ is_known_dewm_name(const char *s)
 			return true;
 	}
 	return false;
+}
+
+static const char *
+detect_dewm_from_env(void)
+{
+	const char *desktop_env;
+
+	if (getenv("HYPRLAND_INSTANCE_SIGNATURE") != NULL)
+		return "Hyprland";
+	if (getenv("SWAYSOCK") != NULL)
+		return "Sway";
+	if (getenv("NIRI_SOCKET") != NULL)
+		return "Niri";
+	if (getenv("RIVER_SOCKET") != NULL)
+		return "River";
+	if (getenv("WAYFIRE_SOCKET") != NULL)
+		return "Wayfire";
+	if (getenv("LABWC_PID") != NULL)
+		return "labwc";
+
+	desktop_env = getenv("XDG_CURRENT_DESKTOP");
+	if (desktop_env != NULL) {
+		if (strstr(desktop_env, "KDE") != NULL)
+			return "KDE";
+		if (strstr(desktop_env, "GNOME") != NULL)
+			return "GNOME";
+		if (strstr(desktop_env, "X-Cinnamon") != NULL)
+			return "Cinnamon";
+		if (strstr(desktop_env, "MATE") != NULL)
+			return "MATE";
+		if (strstr(desktop_env, "LXQt") != NULL)
+			return "LXQt";
+		if (strstr(desktop_env, "XFCE") != NULL)
+			return "XFCE";
+	}
+
+	return NULL;
 }
 
 static const char *
@@ -333,6 +403,7 @@ detect_dewm(char *out, size_t cap)
 {
 	const char *session_type;
 	const char *desktop_env;
+	const char *env_dewm;
 	uid_t uid;
 	DIR *procdir;
 	struct dirent *ent;
@@ -346,6 +417,14 @@ detect_dewm(char *out, size_t cap)
 	int loginuid_read;
 
 	session_type = getenv("XDG_SESSION_TYPE");
+	env_dewm = detect_dewm_from_env();
+	if (env_dewm != NULL) {
+		if (session_type != NULL && session_type[0] != '\0')
+			snprintf(out, cap, "%s (%s)", env_dewm, session_type);
+		else
+			snprintf(out, cap, "%s", env_dewm);
+		return;
+	}
 	desktop_env = first_nonempty_env("XDG_CURRENT_DESKTOP", "XDG_SESSION_DESKTOP", "DESKTOP_SESSION");
 	copy_desktop_name(desktop_env, desktop_name, sizeof(desktop_name));
 	if (desktop_name[0] != '\0') {
@@ -355,14 +434,14 @@ detect_dewm(char *out, size_t cap)
 			snprintf(out, cap, "%s", desktop_name);
 		return;
 	}
+	if (session_type != NULL && session_type[0] != '\0') {
+		snprintf(out, cap, "%s", session_type);
+		return;
+	}
 
 	procdir = opendir("/proc");
 	if (procdir == NULL) {
-		if (session_type != NULL && session_type[0] != '\0')
-			snprintf(out, cap, "%s", session_type);
-		else {
-			snprintf(out, cap, "unknown");
-		}
+		snprintf(out, cap, "unknown");
 		return;
 	}
 
@@ -401,17 +480,10 @@ detect_dewm(char *out, size_t cap)
 	closedir(procdir);
 
 	if (wm_found[0] != '\0') {
-		if (session_type != NULL && session_type[0] != '\0')
-			snprintf(out, cap, "%s (%s)", wm_found, session_type);
-		else
-			snprintf(out, cap, "%s", wm_found);
+		snprintf(out, cap, "%s", wm_found);
 		return;
 	}
 
-	if (session_type != NULL && session_type[0] != '\0') {
-		snprintf(out, cap, "%s", session_type);
-		return;
-	}
 	if (getenv("WAYLAND_DISPLAY") != NULL) {
 		snprintf(out, cap, "Wayland");
 		return;
@@ -528,78 +600,6 @@ detect_cpu(char *out, size_t cap)
 		snprintf(out, cap, "unknown");
 }
 
-static void
-detect_gpu(char *out, size_t cap)
-{
-	DIR *dir;
-	struct dirent *ent;
-	char path[256];
-	char vendor_id[64];
-	char model[256];
-	const char *vendor;
-	FILE *fp;
-
-	out[0] = '\0';
-
-	dir = opendir("/proc/driver/nvidia/gpus");
-	if (dir != NULL) {
-		while ((ent = readdir(dir)) != NULL) {
-			if (ent->d_name[0] == '.')
-				continue;
-			snprintf(path, sizeof(path), "/proc/driver/nvidia/gpus/%.120s/information", ent->d_name);
-			fp = fopen(path, "r");
-			if (fp == NULL)
-				continue;
-			while (fgets(model, sizeof(model), fp) != NULL) {
-				char *value;
-				if (strncmp(model, "Model:", 6) != 0)
-					continue;
-				value = model + 6;
-				shitfetch_trim(value);
-				if (value[0] != '\0') {
-					snprintf(out, cap, "%s", value);
-					fclose(fp);
-					closedir(dir);
-					return;
-				}
-			}
-			fclose(fp);
-		}
-		closedir(dir);
-	}
-
-	dir = opendir("/sys/class/drm");
-	if (dir != NULL) {
-		while ((ent = readdir(dir)) != NULL) {
-			if (strncmp(ent->d_name, "card", 4) != 0 || strchr(ent->d_name, '-') != NULL)
-				continue;
-			snprintf(path, sizeof(path), "/sys/class/drm/%.120s/device/vendor", ent->d_name);
-			read_first_line(path, vendor_id, sizeof(vendor_id));
-			if (vendor_id[0] == '\0')
-				continue;
-			if (strcmp(vendor_id, "0x10de") == 0)
-				vendor = "NVIDIA";
-			else if (strcmp(vendor_id, "0x1002") == 0 || strcmp(vendor_id, "0x1022") == 0)
-				vendor = "AMD";
-			else if (strcmp(vendor_id, "0x8086") == 0)
-				vendor = "Intel";
-			else
-				vendor = "Unknown";
-
-			snprintf(path, sizeof(path), "/sys/class/drm/%.120s/device/device", ent->d_name);
-			read_first_line(path, model, sizeof(model));
-			if (model[0] != '\0')
-				snprintf(out, cap, "%s Graphics (%s)", vendor, model);
-			else
-				snprintf(out, cap, "%s Graphics", vendor);
-			closedir(dir);
-			return;
-		}
-		closedir(dir);
-	}
-
-	snprintf(out, cap, "unknown");
-}
 
 static void
 detect_memory_swap(char *mem_out, size_t mem_cap, char *swap_out, size_t swap_cap)
@@ -710,1093 +710,6 @@ detect_kernel(char *out, size_t cap)
 	snprintf(out, cap, "%s", u.release);
 }
 
-static void
-decode_mount_token(const char *src, char *dst, size_t cap)
-{
-	size_t i = 0;
-	size_t o = 0;
-
-	if (cap == 0)
-		return;
-	while (src[i] != '\0' && o + 1 < cap) {
-		if (src[i] == '\\' && src[i + 1] >= '0' && src[i + 1] <= '7' &&
-			src[i + 2] >= '0' && src[i + 2] <= '7' && src[i + 3] >= '0' && src[i + 3] <= '7') {
-			int v = (src[i + 1] - '0') * 64 + (src[i + 2] - '0') * 8 + (src[i + 3] - '0');
-			dst[o++] = (char)v;
-			i += 4;
-			continue;
-		}
-		dst[o++] = src[i++];
-	}
-	dst[o] = '\0';
-}
-
-static bool
-is_pseudo_fs(const char *fs)
-{
-	static const char *skip[] = {
-		"proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "cgroup", "cgroup2", "pstore",
-		"securityfs", "tracefs", "debugfs", "configfs", "fusectl", "mqueue", "hugetlbfs",
-		"rpc_pipefs", "autofs", "overlay", "squashfs"
-	};
-	size_t i;
-
-	for (i = 0; i < sizeof(skip) / sizeof(skip[0]); i++) {
-		if (strcmp(fs, skip[i]) == 0)
-			return true;
-	}
-	return false;
-}
-
-static bool
-mount_selected(const struct shitfetch_settings *settings, const char *mountpoint)
-{
-	size_t i;
-
-	if (settings->disk_mount_filter_count == 0)
-		return settings->disk_all ? true : strcmp(mountpoint, "/") == 0;
-	for (i = 0; i < settings->disk_mount_filter_count; i++) {
-		if (strcmp(settings->disk_mount_filter[i], mountpoint) == 0)
-			return true;
-	}
-	return false;
-}
-
-static bool
-is_ignored_mount(const char *mountpoint)
-{
-	static const char *ignored[] = {
-		"/boot",
-		"/boot/efi",
-		"/efi",
-		"/snap",
-	};
-	size_t i;
-
-	for (i = 0; i < sizeof(ignored) / sizeof(ignored[0]); i++) {
-		size_t len = strlen(ignored[i]);
-
-		if (strcmp(mountpoint, ignored[i]) == 0)
-			return true;
-		if (strncmp(mountpoint, ignored[i], len) == 0 && mountpoint[len] == '/')
-			return true;
-	}
-	if (strlen(mountpoint) >= 9 && strcmp(mountpoint + strlen(mountpoint) - 9, "/boot/efi") == 0)
-		return true;
-	return false;
-}
-
-static void
-detect_disks(const struct shitfetch_settings *settings, struct shitfetch_data *data)
-{
-	FILE *fp;
-	char line[512];
-	char seen_dev[SHITFETCH_MAX_DISKS][128];
-	char seen_fs[SHITFETCH_MAX_DISKS][64];
-
-	data->disk_count = 0;
-	data->disk[0] = '\0';
-	fp = fopen("/proc/self/mounts", "r");
-	if (fp == NULL)
-		return;
-
-	while (fgets(line, sizeof(line), fp) != NULL && data->disk_count < SHITFETCH_MAX_DISKS) {
-		struct statvfs st;
-		char dev[128];
-		char mnt_enc[128];
-		char mnt[128];
-		char fstype[64];
-		unsigned long long total;
-		unsigned long long avail;
-		unsigned long long used;
-		unsigned int percent;
-		size_t idx;
-		size_t i;
-		bool merged = false;
-
-		if (sscanf(line, "%127s %127s %63s", dev, mnt_enc, fstype) != 3)
-			continue;
-		decode_mount_token(mnt_enc, mnt, sizeof(mnt));
-		if (is_pseudo_fs(fstype))
-			continue;
-		if (dev[0] != '/')
-			continue;
-		if (is_ignored_mount(mnt))
-			continue;
-		if (!mount_selected(settings, mnt))
-			continue;
-		if (statvfs(mnt, &st) != 0)
-			continue;
-
-		total = (unsigned long long)st.f_blocks * st.f_frsize;
-		avail = (unsigned long long)st.f_bavail * st.f_frsize;
-		if (total == 0)
-			continue;
-		used = total > avail ? total - avail : 0;
-		percent = total == 0 ? 0 : (unsigned int)((used * 100ULL) / total);
-
-		for (i = 0; i < data->disk_count; i++) {
-			if (strcmp(seen_dev[i], dev) == 0 && strcmp(seen_fs[i], fstype) == 0) {
-				if (strlen(mnt) < strlen(data->disk_mounts[i]))
-					snprintf(data->disk_mounts[i], sizeof(data->disk_mounts[i]), "%.63s", mnt);
-				merged = true;
-				break;
-			}
-		}
-		if (merged)
-			continue;
-
-		idx = data->disk_count++;
-		snprintf(seen_dev[idx], sizeof(seen_dev[idx]), "%.127s", dev);
-		snprintf(seen_fs[idx], sizeof(seen_fs[idx]), "%.63s", fstype);
-		snprintf(data->disk_mounts[idx], sizeof(data->disk_mounts[idx]), "%.63s", mnt);
-		if (settings->disk_show_fs) {
-			snprintf(data->disk_values[idx], sizeof(data->disk_values[idx]),
-				"%llu / %llu GiB (%%{%u}) - %s",
-				(unsigned long long)(used / (1024ULL * 1024ULL * 1024ULL)),
-				(unsigned long long)(total / (1024ULL * 1024ULL * 1024ULL)),
-				percent, fstype);
-		} else {
-			snprintf(data->disk_values[idx], sizeof(data->disk_values[idx]),
-				"%llu / %llu GiB (%%{%u})",
-				(unsigned long long)(used / (1024ULL * 1024ULL * 1024ULL)),
-				(unsigned long long)(total / (1024ULL * 1024ULL * 1024ULL)),
-				percent);
-		}
-	}
-	fclose(fp);
-	if (data->disk_count == 0) {
-		snprintf(data->disk_mounts[0], sizeof(data->disk_mounts[0]), "/");
-		snprintf(data->disk_values[0], sizeof(data->disk_values[0]), "unknown");
-		data->disk_count = 1;
-	}
-	snprintf(data->disk, sizeof(data->disk), "%s", data->disk_values[0]);
-}
-
-static bool
-append_pkg_segment(char *dst, size_t cap, const char *segment)
-{
-	size_t have = strlen(dst);
-
-	if (have == 0)
-		return snprintf(dst, cap, "%s", segment) > 0;
-	if (have + 2 >= cap)
-		return false;
-	dst[have++] = ',';
-	dst[have++] = ' ';
-	dst[have] = '\0';
-	strncat(dst, segment, cap - have - 1);
-	return true;
-}
-
-static int
-count_pacman_local_path(const char *path)
-{
-	DIR *dir = opendir(path);
-	struct dirent *ent;
-	int count = 0;
-
-	if (dir == NULL)
-		return -1;
-	while ((ent = readdir(dir)) != NULL) {
-		if (ent->d_name[0] == '.')
-			continue;
-		count++;
-	}
-	closedir(dir);
-	return count;
-}
-
-static int
-count_pacman_local(void)
-{
-	return count_pacman_local_path("/var/lib/pacman/local");
-}
-
-static int
-count_dpkg_status_file(const char *path)
-{
-	FILE *fp;
-	char line[256];
-	int count = 0;
-
-	if (path == NULL || path[0] == '\0')
-		return -1;
-	fp = fopen(path, "r");
-	if (fp == NULL)
-		return -1;
-	while (fgets(line, sizeof(line), fp) != NULL) {
-		if (strncmp(line, "Status: install ok installed", 28) == 0)
-			count++;
-	}
-	fclose(fp);
-	return count;
-}
-
-static int
-count_dpkg_status(void)
-{
-	int primary = count_dpkg_status_file("/var/lib/dpkg/status");
-
-	if (primary > 0 || !shitfetch_file_exists("/bedrock/etc/bedrock-release"))
-		return primary;
-
-	DIR *dir = opendir("/bedrock/strata");
-	struct dirent *ent;
-	int total = 0;
-	bool any = false;
-
-	if (dir == NULL)
-		return primary;
-	while ((ent = readdir(dir)) != NULL) {
-		char path[SHITFETCH_MAX_PATH];
-		int n;
-
-		if (ent->d_name[0] == '.')
-			continue;
-		snprintf(path, sizeof(path), "/bedrock/strata/%s/var/lib/dpkg/status", ent->d_name);
-		n = count_dpkg_status_file(path);
-		if (n > 0) {
-			total += n;
-			any = true;
-		}
-	}
-	closedir(dir);
-	return any ? total : primary;
-}
-
-static int
-count_apk_installed_path(const char *path)
-{
-	FILE *fp = fopen(path, "r");
-	char line[256];
-	int count = 0;
-
-	if (fp == NULL)
-		return -1;
-	while (fgets(line, sizeof(line), fp) != NULL) {
-		if (strncmp(line, "P:", 2) == 0)
-			count++;
-	}
-	fclose(fp);
-	return count;
-}
-
-static int
-count_apk_installed(void)
-{
-	return count_apk_installed_path("/lib/apk/db/installed");
-}
-
-static int
-count_xbps_db_path(const char *path)
-{
-	DIR *dir = opendir(path);
-	struct dirent *ent;
-	int count = 0;
-	size_t len;
-
-	if (dir == NULL)
-		return -1;
-	while ((ent = readdir(dir)) != NULL) {
-		len = strlen(ent->d_name);
-		if (len > 6 && strcmp(ent->d_name + len - 6, ".plist") == 0)
-			count++;
-	}
-	closedir(dir);
-	return count;
-}
-
-static int
-count_xbps_db(void)
-{
-	return count_xbps_db_path("/var/db/xbps");
-}
-
-static int
-count_portage_db_path(const char *path)
-{
-	DIR *cats = opendir(path);
-	struct dirent *cat;
-	int count = 0;
-
-	if (cats == NULL)
-		return -1;
-	while ((cat = readdir(cats)) != NULL) {
-		DIR *pkgs;
-		struct dirent *pkg;
-		char cat_path[SHITFETCH_MAX_PATH];
-
-		if (cat->d_name[0] == '.')
-			continue;
-		snprintf(cat_path, sizeof(cat_path), "%s/%s", path, cat->d_name);
-		pkgs = opendir(cat_path);
-		if (pkgs == NULL)
-			continue;
-		while ((pkg = readdir(pkgs)) != NULL) {
-			if (pkg->d_name[0] == '.')
-				continue;
-			count++;
-		}
-		closedir(pkgs);
-	}
-	closedir(cats);
-	return count;
-}
-
-static int
-count_portage_vardb(void)
-{
-	return count_portage_db_path("/var/db/pkg");
-}
-
-static int
-count_nix_store_path(const char *path)
-{
-	DIR *dir = opendir(path);
-	struct dirent *ent;
-	int count = 0;
-
-	if (dir == NULL)
-		return -1;
-	while ((ent = readdir(dir)) != NULL) {
-		if (ent->d_name[0] == '.')
-			continue;
-		if (strchr(ent->d_name, '-') != NULL)
-			count++;
-	}
-	closedir(dir);
-	return count;
-}
-
-static int
-count_nix_store(void)
-{
-	return count_nix_store_path("/nix/store");
-}
-
-static int
-count_flatpak_dir(const char *path)
-{
-	DIR *dir;
-	struct dirent *ent;
-	int count = 0;
-
-	dir = opendir(path);
-	if (dir == NULL)
-		return -1;
-	while ((ent = readdir(dir)) != NULL) {
-		if (ent->d_name[0] == '.')
-			continue;
-		count++;
-	}
-	closedir(dir);
-	return count;
-}
-
-static int
-count_flatpak_system(void)
-{
-	int count = 0;
-	int apps = count_flatpak_dir("/var/lib/flatpak/app");
-	int runtimes = count_flatpak_dir("/var/lib/flatpak/runtime");
-
-	if (apps > 0)
-		count += apps;
-	if (runtimes > 0)
-		count += runtimes;
-	return count;
-}
-
-static int
-count_flatpak_user(void)
-{
-	const char *home;
-	char path[SHITFETCH_MAX_PATH];
-	DIR *dir;
-	struct dirent *ent;
-	int count = 0;
-
-	home = getenv("HOME");
-	if (home == NULL || home[0] == '\0')
-		return -1;
-	snprintf(path, sizeof(path), "%s/.local/share/flatpak/app", home);
-	dir = opendir(path);
-	if (dir == NULL)
-		return -1;
-	while ((ent = readdir(dir)) != NULL) {
-		if (ent->d_name[0] == '.')
-			continue;
-		count++;
-	}
-	closedir(dir);
-	return count;
-}
-
-static int
-count_flatpak(void)
-{
-	int system = count_flatpak_system();
-	int user = count_flatpak_user();
-	int system_ok = system > 0 ? system : 0;
-	int user_ok = user > 0 ? user : 0;
-
-	return system_ok + user_ok;
-}
-
-static int
-count_snap_core(void)
-{
-	DIR *dir = opendir("/snap");
-	struct dirent *ent;
-	int count = 0;
-
-	if (dir == NULL)
-		return -1;
-	while ((ent = readdir(dir)) != NULL) {
-		if (ent->d_name[0] == '.')
-			continue;
-		if (ent->d_type == DT_DIR)
-			count++;
-	}
-	closedir(dir);
-	return count;
-}
-
-static int
-count_snap_varlib(void)
-{
-	DIR *dir = opendir("/var/lib/snapd/snaps");
-	struct dirent *ent;
-	int count = 0;
-	size_t len;
-
-	if (dir == NULL)
-		return -1;
-	while ((ent = readdir(dir)) != NULL) {
-		len = strlen(ent->d_name);
-		if (len > 5 && strcmp(ent->d_name + len - 5, ".snap") == 0)
-			count++;
-	}
-	closedir(dir);
-	return count;
-}
-
-static int
-count_snap(void)
-{
-	int cores = count_snap_core();
-	int varlib = count_snap_varlib();
-
-	if (varlib > 0)
-		return varlib;
-	if (cores > 0)
-		return cores;
-	return -1;
-}
-
-static int
-count_homebrew_cellar(void)
-{
-	const char *home;
-	char path[SHITFETCH_MAX_PATH];
-	DIR *dir;
-	struct dirent *ent;
-	int count = 0;
-
-	home = getenv("HOME");
-	if (home == NULL)
-		home = "/root";
-
-	snprintf(path, sizeof(path), "%s/.linuxbrew/Cellar", home);
-	dir = opendir(path);
-	if (dir != NULL) {
-		while ((ent = readdir(dir)) != NULL) {
-			DIR *vers;
-			struct dirent *v;
-
-			if (ent->d_name[0] == '.')
-				continue;
-			snprintf(path, sizeof(path), "%s/.linuxbrew/Cellar/%s", home, ent->d_name);
-			vers = opendir(path);
-			if (vers == NULL)
-				continue;
-			while ((v = readdir(vers)) != NULL) {
-				if (v->d_name[0] == '.')
-					continue;
-				count++;
-			}
-			closedir(vers);
-		}
-		closedir(dir);
-		if (count > 0)
-			return count;
-	}
-
-	dir = opendir("/home/linuxbrew/.linuxbrew/Cellar");
-	if (dir != NULL) {
-		while ((ent = readdir(dir)) != NULL) {
-			DIR *vers;
-			struct dirent *v;
-
-			if (ent->d_name[0] == '.')
-				continue;
-			snprintf(path, sizeof(path), "/home/linuxbrew/.linuxbrew/Cellar/%s", ent->d_name);
-			vers = opendir(path);
-			if (vers == NULL)
-				continue;
-			while ((v = readdir(vers)) != NULL) {
-				if (v->d_name[0] == '.')
-					continue;
-				count++;
-			}
-			closedir(vers);
-		}
-		closedir(dir);
-		if (count > 0)
-			return count;
-	}
-
-	snprintf(path, sizeof(path), "%s/homebrew/Cellar", home);
-	dir = opendir(path);
-	if (dir != NULL) {
-		while ((ent = readdir(dir)) != NULL) {
-			DIR *vers;
-			struct dirent *v;
-
-			if (ent->d_name[0] == '.')
-				continue;
-			snprintf(path, sizeof(path), "%s/homebrew/Cellar/%s", home, ent->d_name);
-			vers = opendir(path);
-			if (vers == NULL)
-				continue;
-			while ((v = readdir(vers)) != NULL) {
-				if (v->d_name[0] == '.')
-					continue;
-				count++;
-			}
-			closedir(vers);
-		}
-		closedir(dir);
-		if (count > 0)
-			return count;
-	}
-
-	dir = opendir("/usr/local/Cellar");
-	if (dir != NULL) {
-		while ((ent = readdir(dir)) != NULL) {
-			DIR *vers;
-			struct dirent *v;
-
-			if (ent->d_name[0] == '.')
-				continue;
-			snprintf(path, sizeof(path), "/usr/local/Cellar/%s", ent->d_name);
-			vers = opendir(path);
-			if (vers == NULL)
-				continue;
-			while ((v = readdir(vers)) != NULL) {
-				if (v->d_name[0] == '.')
-					continue;
-				count++;
-			}
-			closedir(vers);
-		}
-		closedir(dir);
-	}
-	return count;
-}
-
-static int
-count_homebrew_opt(void)
-{
-	const char *home;
-	char path[SHITFETCH_MAX_PATH];
-	DIR *dir;
-	struct dirent *ent;
-	int count = 0;
-
-	home = getenv("HOME");
-	if (home == NULL)
-		home = "/root";
-
-	snprintf(path, sizeof(path), "%s/.linuxbrew/opt", home);
-	dir = opendir(path);
-	if (dir != NULL) {
-		while ((ent = readdir(dir)) != NULL) {
-			if (ent->d_name[0] == '.')
-				continue;
-			count++;
-		}
-		closedir(dir);
-		if (count > 0)
-			return count;
-	}
-
-	dir = opendir("/home/linuxbrew/.linuxbrew/opt");
-	if (dir != NULL) {
-		while ((ent = readdir(dir)) != NULL) {
-			if (ent->d_name[0] == '.')
-				continue;
-			count++;
-		}
-		closedir(dir);
-		if (count > 0)
-			return count;
-	}
-
-	snprintf(path, sizeof(path), "%s/homebrew/opt", home);
-	dir = opendir(path);
-	if (dir != NULL) {
-		while ((ent = readdir(dir)) != NULL) {
-			if (ent->d_name[0] == '.')
-				continue;
-			count++;
-		}
-		closedir(dir);
-		if (count > 0)
-			return count;
-	}
-
-	dir = opendir("/usr/local/opt");
-	if (dir != NULL) {
-		while ((ent = readdir(dir)) != NULL) {
-			if (ent->d_name[0] == '.')
-				continue;
-			count++;
-		}
-		closedir(dir);
-	}
-	return count;
-}
-
-static int
-count_homebrew(void)
-{
-	int opt = count_homebrew_opt();
-
-	if (opt > 0)
-		return opt;
-	return count_homebrew_cellar();
-}
-
-static bool
-collect_bedrock_packages(char *packages, size_t packages_cap)
-{
-	DIR *dir;
-	struct dirent *ent;
-	int pacman_total = 0;
-	int dpkg_total = 0;
-	int apk_total = 0;
-	int xbps_total = 0;
-	int portage_total = 0;
-	int nix_total = 0;
-	int flatpak_total = 0;
-	int snap_total = 0;
-	int homebrew_total = 0;
-	bool any = false;
-	char seg[64];
-
-	dir = opendir("/bedrock/strata");
-	if (dir == NULL)
-		return false;
-	while ((ent = readdir(dir)) != NULL) {
-		const char *stratum = ent->d_name;
-		char root[SHITFETCH_MAX_PATH];
-		char path[SHITFETCH_MAX_PATH];
-		int n;
-
-		if (stratum[0] == '.')
-			continue;
-		if (strcmp(stratum, "bedrock") == 0 || strcmp(stratum, "init") == 0 ||
-			strcmp(stratum, "local") == 0 || strcmp(stratum, "hijacked") == 0)
-			continue;
-
-		snprintf(root, sizeof(root), "/bedrock/strata/%s", stratum);
-
-		snprintf(path, sizeof(path), "%s/var/lib/pacman/local", root);
-		n = count_pacman_local_path(path);
-		if (n > 0) {
-			pacman_total += n;
-			any = true;
-		}
-
-		snprintf(path, sizeof(path), "%s/var/lib/dpkg/status", root);
-		n = count_dpkg_status_file(path);
-		if (n > 0) {
-			dpkg_total += n;
-			any = true;
-		}
-
-		snprintf(path, sizeof(path), "%s/lib/apk/db/installed", root);
-		n = count_apk_installed_path(path);
-		if (n > 0) {
-			apk_total += n;
-			any = true;
-		}
-
-		snprintf(path, sizeof(path), "%s/var/db/xbps", root);
-		n = count_xbps_db_path(path);
-		if (n > 0) {
-			xbps_total += n;
-			any = true;
-		}
-
-		snprintf(path, sizeof(path), "%s/var/db/pkg", root);
-		n = count_portage_db_path(path);
-		if (n > 0) {
-			portage_total += n;
-			any = true;
-		}
-
-		snprintf(path, sizeof(path), "%s/nix/store", root);
-		n = count_nix_store_path(path);
-		if (n > 0) {
-			nix_total += n;
-			any = true;
-		}
-
-		snprintf(path, sizeof(path), "%s/var/lib/flatpak/app", root);
-		n = count_flatpak_dir(path);
-		if (n > 0) {
-			flatpak_total += n;
-			any = true;
-		}
-
-		snprintf(path, sizeof(path), "%s/var/lib/flatpak/runtime", root);
-		n = count_flatpak_dir(path);
-		if (n > 0) {
-			flatpak_total += n;
-			any = true;
-		}
-	}
-	closedir(dir);
-
-	packages[0] = '\0';
-	if (pacman_total > 0) {
-		snprintf(seg, sizeof(seg), "%d (pacman)", pacman_total);
-		append_pkg_segment(packages, packages_cap, seg);
-	}
-	if (dpkg_total > 0) {
-		snprintf(seg, sizeof(seg), "%d (dpkg)", dpkg_total);
-		append_pkg_segment(packages, packages_cap, seg);
-	}
-	if (apk_total > 0) {
-		snprintf(seg, sizeof(seg), "%d (apk)", apk_total);
-		append_pkg_segment(packages, packages_cap, seg);
-	}
-	if (xbps_total > 0) {
-		snprintf(seg, sizeof(seg), "%d (xbps)", xbps_total);
-		append_pkg_segment(packages, packages_cap, seg);
-	}
-	if (portage_total > 0) {
-		snprintf(seg, sizeof(seg), "%d (portage)", portage_total);
-		append_pkg_segment(packages, packages_cap, seg);
-	}
-	if (nix_total > 0) {
-		snprintf(seg, sizeof(seg), "%d (nix)", nix_total);
-		append_pkg_segment(packages, packages_cap, seg);
-	}
-	if (flatpak_total > 0) {
-		snprintf(seg, sizeof(seg), "%d (flatpak)", flatpak_total);
-		append_pkg_segment(packages, packages_cap, seg);
-	}
-	if (snap_total > 0) {
-		snprintf(seg, sizeof(seg), "%d (snap)", snap_total);
-		append_pkg_segment(packages, packages_cap, seg);
-	}
-	if (homebrew_total > 0) {
-		snprintf(seg, sizeof(seg), "%d (homebrew)", homebrew_total);
-		append_pkg_segment(packages, packages_cap, seg);
-	}
-	return any;
-}
-
-static void
-detect_packages(const char *os_id, char *packages, size_t packages_cap)
-{
-	bool has_any = false;
-	bool is_bedrock = strcmp(os_id, "bedrock") == 0;
-	bool have_pacman = shitfetch_file_exists("/var/lib/pacman/local");
-	bool have_dpkg = shitfetch_file_exists("/var/lib/dpkg/status");
-	bool have_apk = shitfetch_file_exists("/lib/apk/db/installed");
-	bool have_xbps = shitfetch_file_exists("/var/db/xbps");
-	bool have_portage = shitfetch_file_exists("/var/db/pkg");
-	bool have_nix = shitfetch_file_exists("/nix/store");
-	bool have_flatpak_system = shitfetch_file_exists("/var/lib/flatpak/app") ||
-		shitfetch_file_exists("/var/lib/flatpak/runtime");
-	bool have_flatpak_user = false;
-	bool have_snap = shitfetch_file_exists("/var/lib/snapd/snaps") || shitfetch_file_exists("/snap");
-	bool have_homebrew = false;
-	const char *home = getenv("HOME");
-	char seg[64];
-	char path[SHITFETCH_MAX_PATH];
-	int count;
-
-	packages[0] = '\0';
-	if (is_bedrock && collect_bedrock_packages(packages, packages_cap))
-		return;
-	if (home == NULL)
-		home = "/root";
-	snprintf(path, sizeof(path), "%s/.local/share/flatpak/app", home);
-	have_flatpak_user = shitfetch_file_exists(path);
-	snprintf(path, sizeof(path), "%s/.linuxbrew/opt", home);
-	have_homebrew = shitfetch_file_exists(path) || shitfetch_file_exists("/home/linuxbrew/.linuxbrew/opt");
-	if (!have_homebrew) {
-		snprintf(path, sizeof(path), "%s/homebrew/opt", home);
-		have_homebrew = shitfetch_file_exists(path) || shitfetch_file_exists("/usr/local/opt");
-	}
-
-	if (have_pacman) {
-		count = count_pacman_local();
-		if (count > 0) {
-			snprintf(seg, sizeof(seg), "%d (pacman)", count);
-			append_pkg_segment(packages, packages_cap, seg);
-			has_any = true;
-		}
-	}
-	if (have_dpkg) {
-		count = count_dpkg_status();
-		if (count > 0) {
-			snprintf(seg, sizeof(seg), "%d (dpkg)", count);
-			append_pkg_segment(packages, packages_cap, seg);
-			has_any = true;
-		}
-	}
-	if (have_apk) {
-		count = count_apk_installed();
-		if (count > 0) {
-			snprintf(seg, sizeof(seg), "%d (apk)", count);
-			append_pkg_segment(packages, packages_cap, seg);
-			has_any = true;
-		}
-	}
-	if (have_xbps) {
-		count = count_xbps_db();
-		if (count > 0) {
-			snprintf(seg, sizeof(seg), "%d (xbps)", count);
-			append_pkg_segment(packages, packages_cap, seg);
-			has_any = true;
-		}
-	}
-	if (have_portage) {
-		count = count_portage_vardb();
-		if (count > 0) {
-			snprintf(seg, sizeof(seg), "%d (portage)", count);
-			append_pkg_segment(packages, packages_cap, seg);
-			has_any = true;
-		}
-	}
-	if (have_nix) {
-		count = count_nix_store();
-		if (count > 0) {
-			snprintf(seg, sizeof(seg), "%d (nix)", count);
-			append_pkg_segment(packages, packages_cap, seg);
-			has_any = true;
-		}
-	}
-	if (have_flatpak_system || have_flatpak_user) {
-		count = count_flatpak();
-		if (count > 0) {
-			snprintf(seg, sizeof(seg), "%d (flatpak)", count);
-			append_pkg_segment(packages, packages_cap, seg);
-			has_any = true;
-		}
-	}
-	if (have_snap) {
-		count = count_snap();
-		if (count > 0) {
-			snprintf(seg, sizeof(seg), "%d (snap)", count);
-			append_pkg_segment(packages, packages_cap, seg);
-			has_any = true;
-		}
-	}
-	if (have_homebrew) {
-		count = count_homebrew();
-		if (count > 0) {
-			snprintf(seg, sizeof(seg), "%d (homebrew)", count);
-			append_pkg_segment(packages, packages_cap, seg);
-			has_any = true;
-		}
-	}
-
-	if (!has_any) {
-		if (is_bedrock && shitfetch_executable_exists("brl")) {
-			snprintf(packages, packages_cap, "strata-managed");
-			return;
-		}
-		snprintf(packages, packages_cap, "unknown");
-	}
-}
-
-static void
-get_monitor_name(const unsigned char *edid, char *out, size_t cap)
-{
-	out[0] = '\0';
-	if (!edid) return;
-	for (int i = 54; i <= 108; i += 18) {
-		if (edid[i] == 0 && edid[i+1] == 0 && edid[i+2] == 0 && edid[i+3] == 0xfc) {
-			int j;
-			for (j = 0; j < 13; j++) {
-				char c = (char)edid[i + 5 + j];
-				if (c == 0x0a || c == 0x0d || c == 0x00) break;
-				if ((size_t)j + 1 < cap) {
-					out[j] = c;
-					out[j+1] = '\0';
-				}
-			}
-			shitfetch_trim(out);
-			return;
-		}
-	}
-}
-
-static void
-format_display_mode(const drmModeModeInfo *mode, drmModeConnector *conn, char *out, size_t cap)
-{
-	double vrefresh;
-	bool is_internal;
-	double inches = 0;
-
-	if (!mode || !conn || !out || cap == 0)
-		return;
-
-	vrefresh = mode->vrefresh;
-	if (vrefresh == 0 && mode->clock > 0 && mode->htotal > 0 && mode->vtotal > 0)
-		vrefresh = (double)mode->clock * 1000.0 / (mode->htotal * mode->vtotal);
-
-	is_internal = conn->connector_type == DRM_MODE_CONNECTOR_eDP ||
-		conn->connector_type == DRM_MODE_CONNECTOR_LVDS ||
-		conn->connector_type == DRM_MODE_CONNECTOR_DSI;
-
-	if (conn->mmWidth > 0 && conn->mmHeight > 0) {
-		double w = (double)conn->mmWidth / 25.4;
-		double h = (double)conn->mmHeight / 25.4;
-		inches = sqrt(w * w + h * h);
-	}
-
-	if (inches > 0) {
-		snprintf(out, cap, "%dx%d@%.0fHz, %.1f\" [%s]",
-			mode->hdisplay, mode->vdisplay, round(vrefresh), inches,
-			is_internal ? "Internal" : "External");
-	} else {
-		snprintf(out, cap, "%dx%d@%.0fHz, ?\" [%s]",
-			mode->hdisplay, mode->vdisplay, round(vrefresh),
-			is_internal ? "Internal" : "External");
-	}
-}
-
-static const drmModeModeInfo *
-pick_connector_mode(drmModeConnector *conn)
-{
-	const drmModeModeInfo *fallback = NULL;
-
-	if (!conn || conn->count_modes <= 0)
-		return NULL;
-
-	for (int i = 0; i < conn->count_modes; i++) {
-		if (conn->modes[i].type & DRM_MODE_TYPE_PREFERRED)
-			return &conn->modes[i];
-		if (!fallback)
-			fallback = &conn->modes[i];
-	}
-
-	return fallback;
-}
-
-static void
-detect_display(char *id, size_t id_cap, char *out, size_t cap)
-{
-	int fd;
-	drmModeRes *res;
-	drmModeConnector *conn;
-	drmModeEncoder *enc;
-	drmModeCrtc *crtc;
-	int i;
-	bool found = false;
-	char card_path[64];
-
-	id[0] = '\0';
-	out[0] = '\0';
-
-	for (int card_idx = 0; card_idx < 8; card_idx++) {
-		snprintf(card_path, sizeof(card_path), "/dev/dri/card%d", card_idx);
-		fd = open(card_path, O_RDONLY | O_CLOEXEC);
-		if (fd < 0) continue;
-
-		res = drmModeGetResources(fd);
-		if (!res) {
-			close(fd);
-			continue;
-		}
-
-		for (i = 0; i < res->count_connectors; i++) {
-			conn = drmModeGetConnector(fd, res->connectors[i]);
-			if (!conn) continue;
-
-			if (conn->connection == DRM_MODE_CONNECTED) {
-				const char *connector_name = "Unknown";
-				static const char *connector_names[] = {
-					"None", "VGA", "DVI-I", "DVI-D", "DVI-A",
-					"Composite", "SVIDEO", "LVDS", "Component",
-					"9PinDIN", "DisplayPort", "HDMI-A", "HDMI-B",
-					"TV", "eDP", "VIRTUAL", "DSI", "DPI", "Writeback",
-					"SPI", "USB"
-				};
-				if (conn->connector_type < sizeof(connector_names)/sizeof(connector_names[0]))
-					connector_name = connector_names[conn->connector_type];
-
-				snprintf(id, id_cap, "%s-%d", connector_name, conn->connector_type_id);
-
-				drmModePropertyBlobPtr edid_blob = NULL;
-				for (int j = 0; j < conn->count_props; j++) {
-					drmModePropertyPtr prop = drmModeGetProperty(fd, conn->props[j]);
-					if (prop) {
-						if (strcmp(prop->name, "EDID") == 0) {
-							edid_blob = drmModeGetPropertyBlob(fd, conn->prop_values[j]);
-							drmModeFreeProperty(prop);
-							break;
-						}
-						drmModeFreeProperty(prop);
-					}
-				}
-				if (edid_blob) {
-					char monitor_name[64];
-					get_monitor_name((const unsigned char *)edid_blob->data, monitor_name, sizeof(monitor_name));
-					if (monitor_name[0] != '\0') {
-						snprintf(id, id_cap, "%s", monitor_name);
-					}
-					drmModeFreePropertyBlob(edid_blob);
-				}
-
-				enc = drmModeGetEncoder(fd, conn->encoder_id);
-				if (enc) {
-					crtc = drmModeGetCrtc(fd, enc->crtc_id);
-					if (crtc && crtc->mode_valid) {
-						format_display_mode(&crtc->mode, conn, out, cap);
-						drmModeFreeCrtc(crtc);
-					}
-					drmModeFreeEncoder(enc);
-				}
-				if (out[0] == '\0') {
-					const drmModeModeInfo *mode = pick_connector_mode(conn);
-
-					if (mode)
-						format_display_mode(mode, conn, out, cap);
-				}
-				drmModeFreeConnector(conn);
-				found = true;
-				break;
-			}
-			drmModeFreeConnector(conn);
-		}
-		drmModeFreeResources(res);
-		close(fd);
-		if (found) break;
-	}
-
-	if (!found)
-		snprintf(out, cap, "unknown");
-}
 
 struct string_detect_task {
 	char *out;
@@ -1822,56 +735,56 @@ struct display_detect_task {
 	size_t out_cap;
 };
 
-static void *
+static int
 run_string_detect(void *arg)
 {
 	struct string_detect_task *task = arg;
 
 	task->fn(task->out, task->cap);
-	return NULL;
+	return 0;
 }
 
-static void *
+static int
 run_packages_detect(void *arg)
 {
 	struct packages_detect_task *task = arg;
 
 	detect_packages(task->os_id, task->packages, task->packages_cap);
-	return NULL;
+	return 0;
 }
 
-static void *
+static int
 run_disks_detect(void *arg)
 {
 	struct disks_detect_task *task = arg;
 
 	detect_disks(task->settings, task->data);
-	return NULL;
+	return 0;
 }
 
-static void *
+static int
 run_display_detect(void *arg)
 {
 	struct display_detect_task *task = arg;
 
 	detect_display(task->id, task->id_cap, task->out, task->out_cap);
-	return NULL;
+	return 0;
 }
 
 static bool
-start_thread(pthread_t *thread, void *(*fn)(void *), void *arg)
+start_thread(thrd_t *thread, int (*fn)(void *), void *arg)
 {
-	return pthread_create(thread, NULL, fn, arg) == 0;
+	return thrd_create(thread, fn, arg) == thrd_success;
 }
 
 void
 shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfetch_data *data)
 {
-	pthread_t dewm_thread;
-	pthread_t term_thread;
-	pthread_t disks_thread;
-	pthread_t packages_thread;
-	pthread_t display_thread;
+	thrd_t dewm_thread;
+	thrd_t term_thread;
+	thrd_t disks_thread;
+	thrd_t packages_thread;
+	thrd_t display_thread;
 	bool dewm_started = false;
 	bool term_started = false;
 	bool disks_started = false;
@@ -1937,9 +850,11 @@ shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfet
 		snprintf(data->cpu, sizeof(data->cpu), "unknown");
 
 	if (settings->module_enabled[SHITFETCH_MODULE_GPU])
-		detect_gpu(data->gpu, sizeof(data->gpu));
-	else
+		detect_gpu(data);
+	else {
 		snprintf(data->gpu, sizeof(data->gpu), "unknown");
+		data->gpu_count = 0;
+	}
 
 	if (settings->module_enabled[SHITFETCH_MODULE_MEMORY] || settings->module_enabled[SHITFETCH_MODULE_SWAP])
 		detect_memory_swap(data->memory, sizeof(data->memory), data->swap, sizeof(data->swap));
@@ -1985,15 +900,15 @@ shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfet
 	}
 
 	if (dewm_started)
-		pthread_join(dewm_thread, NULL);
+		thrd_join(dewm_thread, NULL);
 	if (term_started)
-		pthread_join(term_thread, NULL);
+		thrd_join(term_thread, NULL);
 	if (disks_started)
-		pthread_join(disks_thread, NULL);
+		thrd_join(disks_thread, NULL);
 	if (packages_started)
-		pthread_join(packages_thread, NULL);
+		thrd_join(packages_thread, NULL);
 	if (display_started)
-		pthread_join(display_thread, NULL);
+		thrd_join(display_thread, NULL);
 
 	if (data->os_pretty[0] == '\0')
 		snprintf(data->os_pretty, sizeof(data->os_pretty), "unknown");

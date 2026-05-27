@@ -678,6 +678,7 @@ struct sfcolor_named {
 static const struct sfcolor_named sfcolor_named[] = {
 	{"black", "30"}, {"red", "31"}, {"green", "32"}, {"yellow", "33"},
 	{"blue", "34"}, {"magenta", "35"}, {"cyan", "36"}, {"white", "37"},
+	{"default", "39"}, {"normal", "39"},
 	{"gray", "90"}, {"grey", "90"},
 	{"light-black", "90"}, {"bright-black", "90"},
 	{"light-red", "91"}, {"bright-red", "91"},
