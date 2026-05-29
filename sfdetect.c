@@ -342,6 +342,7 @@ init_name_prettify(const char *name)
 {
 	if (strcmp(name, "systemd") == 0) return "systemd";
 	if (strcmp(name, "openrc-init") == 0) return "OpenRC";
+	if (strcmp(name, "uxinit") == 0) return "uxinit";
 	if (strcmp(name, "runit") == 0) return "runit";
 	if (strcmp(name, "s6-svscan") == 0) return "s6";
 	if (strcmp(name, "s6-init") == 0) return "s6";
@@ -354,37 +355,117 @@ init_name_prettify(const char *name)
 	return NULL;
 }
 
+static bool
+is_generic_init_name(const char *name)
+{
+	return strcmp(name, "init") == 0;
+}
+
+static bool
+normalize_init_name(const char *name, char *out, size_t cap)
+{
+	size_t i;
+
+	if (out == NULL || cap == 0)
+		return false;
+	out[0] = '\0';
+	if (name == NULL || name[0] == '\0')
+		return false;
+
+	shitfetch_basename(name, out, cap);
+	for (i = 0; out[i] != '\0'; i++) {
+		if (isspace((unsigned char)out[i])) {
+			out[i] = '\0';
+			break;
+		}
+	}
+	return out[0] != '\0';
+}
+
+static bool
+format_init_name(const char *name, char *out, size_t cap)
+{
+	char normalized[256];
+	const char *pretty;
+
+	if (!normalize_init_name(name, normalized, sizeof(normalized)))
+		return false;
+	pretty = init_name_prettify(normalized);
+	snprintf(out, cap, "%s", pretty != NULL ? pretty : normalized);
+	return true;
+}
+
+static bool
+read_proc_cmdline_name(const char *path, char *out, size_t cap)
+{
+	FILE *fp;
+	size_t len;
+
+	if (out == NULL || cap == 0)
+		return false;
+	out[0] = '\0';
+	fp = fopen(path, "rb");
+	if (fp == NULL)
+		return false;
+	len = fread(out, 1, cap - 1, fp);
+	fclose(fp);
+	if (len == 0)
+		return false;
+	out[len] = '\0';
+	return true;
+}
+
 static void
 detect_init(char *out, size_t cap)
 {
 	char target[SHITFETCH_MAX_PATH];
-	char basename_buf[256];
+	char raw[256];
+	char name[256];
+	char generic[256];
 	ssize_t len;
-	const char *pretty;
+
+	generic[0] = '\0';
+
+	if (read_proc_cmdline_name("/proc/1/cmdline", raw, sizeof(raw)) &&
+	    normalize_init_name(raw, name, sizeof(name))) {
+		if (!is_generic_init_name(name)) {
+			format_init_name(name, out, cap);
+			return;
+		}
+		format_init_name(name, generic, sizeof(generic));
+	}
+
+	read_first_line("/proc/1/comm", raw, sizeof(raw));
+	if (normalize_init_name(raw, name, sizeof(name))) {
+		if (!is_generic_init_name(name)) {
+			format_init_name(name, out, cap);
+			return;
+		}
+		if (generic[0] == '\0')
+			format_init_name(name, generic, sizeof(generic));
+	}
+
+	len = readlink("/proc/1/exe", target, sizeof(target) - 1);
+	if (len > 0) {
+		target[len] = '\0';
+		if (normalize_init_name(target, name, sizeof(name)) &&
+		    !is_generic_init_name(name)) {
+			format_init_name(name, out, cap);
+			return;
+		}
+	}
 
 	len = readlink("/sbin/init", target, sizeof(target) - 1);
 	if (len > 0) {
 		target[len] = '\0';
-		shitfetch_basename(target, basename_buf, sizeof(basename_buf));
-		pretty = init_name_prettify(basename_buf);
-		if (pretty != NULL) {
-			snprintf(out, cap, "%s", pretty);
-			return;
-		}
-		snprintf(out, cap, "%s", basename_buf);
+		format_init_name(target, out, cap);
 		return;
 	}
 
-	read_first_line("/proc/1/comm", out, cap);
-	if (out[0] != '\0') {
-		pretty = init_name_prettify(out);
-		if (pretty != NULL) {
-			snprintf(out, cap, "%s", pretty);
-			return;
-		}
-	} else {
+	if (generic[0] != '\0')
+		snprintf(out, cap, "%s", generic);
+	else
 		snprintf(out, cap, "unknown");
-	}
 }
 
 static void
