@@ -42,29 +42,16 @@ count_nonhidden_dir_entries(const char *path)
 	return count;
 }
 
-static int
-count_nonhidden_nested_dirs(const char *path)
+static bool
+dir_contains_file(const char *dir_path, const char *file_name)
 {
-	DIR *cats = opendir(path);
-	struct dirent *cat;
-	int count = 0;
-	if (cats == NULL) return -1;
-	while ((cat = readdir(cats)) != NULL) {
-		DIR *pkgs;
-		struct dirent *pkg;
-		char cat_path[SHITFETCH_MAX_PATH];
-		if (cat->d_name[0] == '.') continue;
-		snprintf(cat_path, sizeof(cat_path), "%s/%s", path, cat->d_name);
-		pkgs = opendir(cat_path);
-		if (pkgs == NULL) continue;
-		while ((pkg = readdir(pkgs)) != NULL) {
-			if (pkg->d_name[0] == '.') continue;
-			count++;
-		}
-		closedir(pkgs);
-	}
-	closedir(cats);
-	return count;
+	char path[SHITFETCH_MAX_PATH];
+	struct stat st;
+
+	if (dir_path == NULL || file_name == NULL)
+		return false;
+	snprintf(path, sizeof(path), "%s/%s", dir_path, file_name);
+	return stat(path, &st) == 0 && S_ISREG(st.st_mode);
 }
 
 #define DEFINE_PATH_COUNTER(name, helper, path_literal) static int name##_path(const char *path) { return helper(path); } static int name(void) { return name##_path(path_literal); }
@@ -76,6 +63,7 @@ static int
 count_dpkg_status_file(const char *path)
 {
 	FILE *fp;
+	char io_buf[65536];
 	char line[256];
 	int count = 0;
 	if (path == NULL || path[0] == '\0')
@@ -83,6 +71,7 @@ count_dpkg_status_file(const char *path)
 	fp = fopen(path, "r");
 	if (fp == NULL)
 		return -1;
+	(void)setvbuf(fp, io_buf, _IOFBF, sizeof(io_buf));
 	while (fgets(line, sizeof(line), fp) != NULL) {
 		if (strncmp(line, "Status: install ok installed", 28) == 0)
 			count++;
@@ -207,9 +196,147 @@ count_paludis_exndbam(void)
 	return count_paludis_exndbam_path("/var/db/paludis/repositories/installed");
 }
 
-DEFINE_PATH_COUNTER(count_portage_vardb, count_nonhidden_nested_dirs, "/var/db/pkg")
+static int
+count_portage_vardb_path(const char *path)
+{
+	DIR *cats;
+	struct dirent *cat;
+	int count = 0;
+
+	cats = opendir(path);
+	if (cats == NULL)
+		return -1;
+	while ((cat = readdir(cats)) != NULL) {
+		DIR *pkgs;
+		struct dirent *pkg;
+		char cat_path[SHITFETCH_MAX_PATH];
+
+		if (cat->d_name[0] == '.')
+			continue;
+		snprintf(cat_path, sizeof(cat_path), "%s/%s", path, cat->d_name);
+		pkgs = opendir(cat_path);
+		if (pkgs == NULL)
+			continue;
+		while ((pkg = readdir(pkgs)) != NULL) {
+			char pkg_path[SHITFETCH_MAX_PATH];
+
+			if (pkg->d_name[0] == '.')
+				continue;
+			snprintf(pkg_path, sizeof(pkg_path), "%s/%s", cat_path, pkg->d_name);
+			if (dir_contains_file(pkg_path, "CONTENTS"))
+				count++;
+		}
+		closedir(pkgs);
+	}
+	closedir(cats);
+	return count;
+}
+
+static int
+count_portage_vardb(void)
+{
+	return count_portage_vardb_path("/var/db/pkg");
+}
+
 DEFINE_PATH_COUNTER(count_sorcery, count_nonhidden_dir_entries, "/var/log/sorcery/install")
 DEFINE_PATH_COUNTER(count_kiss_installed, count_nonhidden_dir_entries, "/var/db/kiss/installed")
+DEFINE_PATH_COUNTER(count_tazpkg_installed, count_nonhidden_dir_entries, "/var/lib/tazpkg/installed")
+
+static int
+count_pisi_package_path(const char *path)
+{
+	DIR *dir;
+	struct dirent *ent;
+	int count = 0;
+
+	dir = opendir(path);
+	if (dir == NULL)
+		return -1;
+	while ((ent = readdir(dir)) != NULL) {
+		char pkg_path[SHITFETCH_MAX_PATH];
+
+		if (ent->d_name[0] == '.')
+			continue;
+		snprintf(pkg_path, sizeof(pkg_path), "%s/%s", path, ent->d_name);
+		if (dir_contains_file(pkg_path, "metadata.xml") || dir_contains_file(pkg_path, "files.xml"))
+			count++;
+	}
+	closedir(dir);
+	return count;
+}
+
+static int
+count_pisi(void)
+{
+	return count_pisi_package_path("/var/lib/pisi/package");
+}
+
+static int
+count_first_positive_path(const char *const *paths, size_t count, int (*fn)(const char *));
+
+static int
+count_pkgsrc_path(const char *path)
+{
+	DIR *dir;
+	struct dirent *ent;
+	int count = 0;
+
+	dir = opendir(path);
+	if (dir == NULL)
+		return -1;
+	while ((ent = readdir(dir)) != NULL) {
+		char pkg_path[SHITFETCH_MAX_PATH];
+
+		if (ent->d_name[0] == '.')
+			continue;
+		snprintf(pkg_path, sizeof(pkg_path), "%s/%s", path, ent->d_name);
+		if (dir_contains_file(pkg_path, "+CONTENTS"))
+			count++;
+	}
+	closedir(dir);
+	return count;
+}
+
+static int
+count_pkgsrc(void)
+{
+	static const char *paths[] = {
+		"/var/db/pkg",
+		"/usr/pkg/pkgdb",
+	};
+
+	return count_first_positive_path(paths, sizeof(paths) / sizeof(paths[0]), count_pkgsrc_path);
+}
+
+static int
+count_pkgutils_db_file(const char *path)
+{
+	FILE *fp;
+	char line[512];
+	int count = 0;
+
+	fp = fopen(path, "r");
+	if (fp == NULL)
+		return -1;
+	while (fgets(line, sizeof(line), fp) != NULL) {
+		char *p = line;
+
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (*p == '\0' || *p == '\n' || *p == '#')
+			continue;
+		if (strchr(p, '#') != NULL && strstr(p, ".pkg.tar") != NULL)
+			count++;
+	}
+	fclose(fp);
+	return count;
+}
+
+static int
+count_pkgutils(void)
+{
+	return count_pkgutils_db_file("/var/lib/pkg/db");
+}
 
 static int
 count_opkg_status_file(const char *path)
@@ -238,29 +365,228 @@ count_opkg(void)
 
 DEFINE_PATH_COUNTER(count_eopkg, count_nonhidden_dir_entries, "/var/lib/eopkg/package")
 
-
 static int
-count_nix_store_path(const char *path)
+count_swupd_path(const char *path)
 {
-	DIR *dir = opendir(path);
+	DIR *dir;
 	struct dirent *ent;
 	int count = 0;
+
+	dir = opendir(path);
 	if (dir == NULL)
 		return -1;
 	while ((ent = readdir(dir)) != NULL) {
+		size_t len;
+
 		if (ent->d_name[0] == '.')
 			continue;
-		if (strchr(ent->d_name, '-') != NULL)
-			count++;
+		len = strlen(ent->d_name);
+		if (len > 8 && strcmp(ent->d_name + len - 8, ".version") == 0)
+			continue;
+		count++;
 	}
 	closedir(dir);
 	return count;
 }
 
 static int
-count_nix_store(void)
+count_swupd(void)
 {
-	return count_nix_store_path("/nix/store");
+	return count_swupd_path("/usr/share/clear/bundles");
+}
+
+static int
+count_manifest_nix_file(const char *path)
+{
+	FILE *fp;
+	char line[512];
+	int count = 0;
+
+	fp = fopen(path, "r");
+	if (fp == NULL)
+		return -1;
+	while (fgets(line, sizeof(line), fp) != NULL) {
+		char *p = line;
+
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (strncmp(p, "{ meta", 6) == 0 || strncmp(p, "{ name", 6) == 0)
+			count++;
+	}
+	fclose(fp);
+	return count;
+}
+
+static int
+count_manifest_json_file(const char *path)
+{
+	FILE *fp;
+	char line[1024];
+	int count = 0;
+
+	fp = fopen(path, "r");
+	if (fp == NULL)
+		return -1;
+	while (fgets(line, sizeof(line), fp) != NULL) {
+		if (strstr(line, "\"storePath\"") != NULL)
+			count++;
+	}
+	fclose(fp);
+	return count;
+}
+
+static int
+count_nix_profile_path(const char *path)
+{
+	char manifest_path[SHITFETCH_MAX_PATH];
+	int count;
+
+	snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.json", path);
+	count = count_manifest_json_file(manifest_path);
+	if (count > 0)
+		return count;
+	snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.nix", path);
+	return count_manifest_nix_file(manifest_path);
+}
+
+static bool
+nix_manifest_seen(const struct stat *seen, size_t seen_count, const struct stat *st)
+{
+	size_t i;
+
+	for (i = 0; i < seen_count; i++) {
+		if (seen[i].st_dev == st->st_dev && seen[i].st_ino == st->st_ino)
+			return true;
+	}
+	return false;
+}
+
+static void
+add_nix_profile_count(const char *path, int *total, struct stat *seen, size_t *seen_count, size_t seen_cap)
+{
+	char manifest_path[SHITFETCH_MAX_PATH];
+	struct stat st;
+	int count;
+
+	if (path == NULL || total == NULL || seen == NULL || seen_count == NULL)
+		return;
+	snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.json", path);
+	if (stat(manifest_path, &st) == 0) {
+		if (nix_manifest_seen(seen, *seen_count, &st))
+			return;
+		count = count_manifest_json_file(manifest_path);
+		if (count > 0) {
+			if (*seen_count < seen_cap)
+				seen[(*seen_count)++] = st;
+			*total += count;
+		}
+		return;
+	}
+	snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.nix", path);
+	if (stat(manifest_path, &st) == 0) {
+		if (nix_manifest_seen(seen, *seen_count, &st))
+			return;
+		count = count_manifest_nix_file(manifest_path);
+		if (count > 0) {
+			if (*seen_count < seen_cap)
+				seen[(*seen_count)++] = st;
+			*total += count;
+		}
+	}
+}
+
+static int
+count_nix(void)
+{
+	const char *home = getenv("HOME");
+	const char *user = getenv("USER");
+	const char *xdg_state = getenv("XDG_STATE_HOME");
+	char path[SHITFETCH_MAX_PATH];
+	struct stat seen[8];
+	size_t seen_count = 0;
+	int total = 0;
+
+	if (xdg_state != NULL && xdg_state[0] != '\0') {
+		snprintf(path, sizeof(path), "%s/nix/profiles/profile", xdg_state);
+		add_nix_profile_count(path, &total, seen, &seen_count, sizeof(seen) / sizeof(seen[0]));
+	} else if (home != NULL && home[0] != '\0') {
+		snprintf(path, sizeof(path), "%s/.local/state/nix/profiles/profile", home);
+		add_nix_profile_count(path, &total, seen, &seen_count, sizeof(seen) / sizeof(seen[0]));
+	}
+	if (home != NULL && home[0] != '\0') {
+		snprintf(path, sizeof(path), "%s/.nix-profile", home);
+		add_nix_profile_count(path, &total, seen, &seen_count, sizeof(seen) / sizeof(seen[0]));
+	}
+	if (user != NULL && user[0] != '\0') {
+		snprintf(path, sizeof(path), "/nix/var/nix/profiles/per-user/%s/profile", user);
+		add_nix_profile_count(path, &total, seen, &seen_count, sizeof(seen) / sizeof(seen[0]));
+	}
+	add_nix_profile_count("/nix/var/nix/profiles/per-user/root/profile",
+		&total, seen, &seen_count, sizeof(seen) / sizeof(seen[0]));
+	add_nix_profile_count("/nix/var/nix/profiles/system",
+		&total, seen, &seen_count, sizeof(seen) / sizeof(seen[0]));
+	return total > 0 ? total : -1;
+}
+
+static int
+count_guix_manifest_file(const char *path)
+{
+	FILE *fp;
+	char line[512];
+	int count = 0;
+
+	fp = fopen(path, "r");
+	if (fp == NULL)
+		return -1;
+	while (fgets(line, sizeof(line), fp) != NULL) {
+		char *p = line;
+
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (strncmp(p, "(name ", 6) == 0 || strncmp(p, "(\"", 2) == 0)
+			count++;
+	}
+	fclose(fp);
+	return count;
+}
+
+static int
+count_guix_store_path(const char *path)
+{
+	return count_nonhidden_dir_entries(path);
+}
+
+static int
+count_guix(void)
+{
+	const char *home = getenv("HOME");
+	const char *user = getenv("USER");
+	const char *profile = getenv("GUIX_PROFILE");
+	char path[SHITFETCH_MAX_PATH];
+	int count;
+
+	if (profile != NULL && profile[0] != '\0') {
+		snprintf(path, sizeof(path), "%s/manifest", profile);
+		count = count_guix_manifest_file(path);
+		if (count > 0)
+			return count;
+	}
+	if (home != NULL && home[0] != '\0') {
+		snprintf(path, sizeof(path), "%s/.guix-profile/manifest", home);
+		count = count_guix_manifest_file(path);
+		if (count > 0)
+			return count;
+	}
+	if (user != NULL && user[0] != '\0') {
+		snprintf(path, sizeof(path), "/var/guix/profiles/per-user/%s/guix-profile/manifest", user);
+		count = count_guix_manifest_file(path);
+		if (count > 0)
+			return count;
+	}
+	count = count_guix_manifest_file("/var/guix/profiles/per-user/root/guix-profile/manifest");
+	if (count > 0)
+		return count;
+	return count_guix_store_path("/gnu/store");
 }
 
 static int
@@ -396,6 +722,18 @@ count_homebrew_cellar_path(const char *path)
 }
 
 static int
+count_macports_path(const char *path)
+{
+	return count_homebrew_cellar_path(path);
+}
+
+static int
+count_macports(void)
+{
+	return count_macports_path("/opt/local/var/macports/software");
+}
+
+static int
 count_first_positive_path(const char *const *paths, size_t count, int (*fn)(const char *))
 {
 	size_t i;
@@ -462,9 +800,31 @@ static const struct package_spec package_specs[] = {
 	{"portage", count_portage_vardb, count_portage_vardb_path, "var/db/pkg"},
 	{"sorcery", count_sorcery, count_sorcery_path, "var/log/sorcery/install"},
 	{"kiss", count_kiss_installed, count_kiss_installed_path, "var/db/kiss/installed"},
+	{"tazpkg", count_tazpkg_installed, count_tazpkg_installed_path, "var/lib/tazpkg/installed"},
+	{"pisi", count_pisi, count_pisi_package_path, "var/lib/pisi/package"},
+	{"pkgsrc", count_pkgsrc, count_pkgsrc_path, "var/db/pkg"},
+	{"pkgutils", count_pkgutils, count_pkgutils_db_file, "var/lib/pkg/db"},
 	{"opkg", count_opkg, count_opkg_status_file, "usr/lib/opkg/status"},
 	{"eopkg", count_eopkg, count_eopkg_path, "var/lib/eopkg/package"},
-	{"nix", count_nix_store, count_nix_store_path, "nix/store"},
+	{"swupd", count_swupd, count_swupd_path, "usr/share/clear/bundles"},
+	{"nix", count_nix, count_nix_profile_path, "nix/var/nix/profiles/system"},
+	{"guix", count_guix, count_guix_store_path, "gnu/store"},
+	{"macports", count_macports, count_macports_path, "opt/local/var/macports/software"},
+};
+
+static const struct package_spec bedrock_package_specs[] = {
+	{"pacman", count_pacman_local, count_pacman_local_path, "var/lib/pacman/local"},
+	{"dpkg", count_dpkg_status, count_dpkg_status_file, "var/lib/dpkg/status"},
+	{"apk", count_apk_installed, count_apk_installed_path, "lib/apk/db/installed"},
+	{"xbps", count_xbps_db, count_xbps_db_path, "var/db/xbps"},
+	{"pkgtools", count_pkgtools, count_pkgtools_path, "var/log/packages"},
+	{"paludis", count_paludis_exndbam, count_paludis_exndbam_path, "var/db/paludis/repositories/installed"},
+	{"portage", count_portage_vardb, count_portage_vardb_path, "var/db/pkg"},
+	{"kiss", count_kiss_installed, count_kiss_installed_path, "var/db/kiss/installed"},
+	{"pkgutils", count_pkgutils, count_pkgutils_db_file, "var/lib/pkg/db"},
+	{"opkg", count_opkg, count_opkg_status_file, "usr/lib/opkg/status"},
+	{"eopkg", count_eopkg, count_eopkg_path, "var/lib/eopkg/package"},
+	{"swupd", count_swupd, count_swupd_path, "usr/share/clear/bundles"},
 };
 
 static bool
@@ -503,8 +863,7 @@ collect_bedrock_packages(char *packages, size_t packages_cap)
 {
 	DIR *dir;
 	struct dirent *ent;
-	int totals[sizeof(package_specs) / sizeof(package_specs[0])] = {0};
-	int flatpak_total = 0;
+	int totals[sizeof(bedrock_package_specs) / sizeof(bedrock_package_specs[0])] = {0};
 	bool any = false;
 	size_t i;
 	dir = opendir("/bedrock/strata");
@@ -521,32 +880,19 @@ collect_bedrock_packages(char *packages, size_t packages_cap)
 			strcmp(stratum, "local") == 0 || strcmp(stratum, "hijacked") == 0)
 			continue;
 		snprintf(root, sizeof(root), "/bedrock/strata/%s", stratum);
-		for (i = 0; i < sizeof(package_specs) / sizeof(package_specs[0]); i++) {
-			snprintf(path, sizeof(path), "%s/%s", root, package_specs[i].bedrock_relpath);
-			n = package_specs[i].count_path(path);
+		for (i = 0; i < sizeof(bedrock_package_specs) / sizeof(bedrock_package_specs[0]); i++) {
+			snprintf(path, sizeof(path), "%s/%s", root, bedrock_package_specs[i].bedrock_relpath);
+			n = bedrock_package_specs[i].count_path(path);
 			if (n > 0) {
 				totals[i] += n;
 				any = true;
 			}
 		}
-		snprintf(path, sizeof(path), "%s/var/lib/flatpak/app", root);
-		n = count_flatpak_dir(path);
-		if (n > 0) {
-			flatpak_total += n;
-			any = true;
-		}
-		snprintf(path, sizeof(path), "%s/var/lib/flatpak/runtime", root);
-		n = count_flatpak_dir(path);
-		if (n > 0) {
-			flatpak_total += n;
-			any = true;
-		}
 	}
 	closedir(dir);
 	packages[0] = '\0';
-	for (i = 0; i < sizeof(package_specs) / sizeof(package_specs[0]); i++)
-		append_pkg_count(packages, packages_cap, package_specs[i].label, totals[i]);
-	append_pkg_count(packages, packages_cap, "flatpak", flatpak_total);
+	for (i = 0; i < sizeof(bedrock_package_specs) / sizeof(bedrock_package_specs[0]); i++)
+		append_pkg_count(packages, packages_cap, bedrock_package_specs[i].label, totals[i]);
 	return any;
 }
 

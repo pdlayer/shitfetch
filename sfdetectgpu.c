@@ -93,6 +93,7 @@ lookup_pci_device_name(const char *vendor_id, const char *device_id,
 	char device_hex[16];
 	char subvendor_hex[16];
 	char subdevice_hex[16];
+	char io_buf[65536];
 	bool in_vendor = false;
 	bool in_device = false;
 	if (out == NULL || cap == 0)
@@ -127,6 +128,7 @@ lookup_pci_device_name(const char *vendor_id, const char *device_id,
 	fp = fopen(pci_ids_path, "r");
 	if (fp == NULL)
 		return false;
+	(void)setvbuf(fp, io_buf, _IOFBF, sizeof(io_buf));
 	while (fgets(line, sizeof(line), fp) != NULL) {
 		char *name;
 		if (line[0] == '#')

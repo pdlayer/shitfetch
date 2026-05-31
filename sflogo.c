@@ -3,7 +3,6 @@
 #include "sf.h"
 #include "sfcolor.h"
 #include "sfansi.h"
-#include "sfminiansi.h"
 #include "sfutil.h"
 #include "sfascii.h"
 #include "sfminiascii.h"
@@ -30,11 +29,11 @@ normalize_logo_name(const char *src, char *dst, size_t cap)
 }
 
 static const char *
-find_builtin_logo_text(const struct shitfetch_settings *settings, const char *name)
+find_builtin_logo_text_for_template(enum shitfetch_template template, const char *name)
 {
 	size_t i;
 
-	if (settings->template == SHITFETCH_TEMPLATE_MINI) {
+	if (template == SHITFETCH_TEMPLATE_MINI) {
 		for (i = 0; i < sfmini_ascii_entries_count; i++) {
 			if (strcmp(sfmini_ascii_entries[i].name, name) == 0)
 				return sfmini_ascii_entries[i].text;
@@ -47,6 +46,12 @@ find_builtin_logo_text(const struct shitfetch_settings *settings, const char *na
 	}
 
 	return NULL;
+}
+
+static const char *
+find_builtin_logo_text(const struct shitfetch_settings *settings, const char *name)
+{
+	return find_builtin_logo_text_for_template(settings->template, name);
 }
 
 static const char *
@@ -87,72 +92,8 @@ find_logo_text(const struct shitfetch_settings *settings, const char *name, char
 static void
 palette_for_logo(const struct shitfetch_settings *settings, const char *logo_name, const char *out[9])
 {
-	if (settings->template == SHITFETCH_TEMPLATE_MINI)
-		sfmini_palette_for_os(logo_name, out);
-	else
-		sfcolor_palette_for_os(logo_name, out);
-}
-
-static const char *
-logo_main_color_from_text(const char *logo_text, const char *logo_colors[9])
-{
-	size_t counts[9] = {0};
-	int current = 0;
-	int best = 0;
-	const char *p;
-	int i;
-
-	if (logo_text == NULL)
-		return logo_colors[0];
-
-	p = logo_text;
-	while (*p != '\0') {
-		if (*p == '\n' || *p == '\r') {
-			p++;
-			continue;
-		}
-
-		if (*p == '\033') {
-			p++;
-			if (*p == '[') {
-				p++;
-				while (*p != '\0') {
-					if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z')) {
-						p++;
-						break;
-					}
-					p++;
-				}
-				continue;
-			}
-			continue;
-		}
-
-		if (*p == '$') {
-			char n = *(p + 1);
-
-			if (n == '$') {
-				counts[current]++;
-				p += 2;
-				continue;
-			}
-			if (n >= '1' && n <= '9') {
-				current = n - '1';
-				p += 2;
-				continue;
-			}
-		}
-
-		counts[current]++;
-		p++;
-	}
-
-	for (i = 1; i < 9; i++) {
-		if (counts[i] > counts[best])
-			best = i;
-	}
-
-	return logo_colors[best];
+	(void)settings;
+	sfcolor_palette_for_os(logo_name, out);
 }
 
 size_t
@@ -222,9 +163,8 @@ shitfetch_logo_main_color(const struct shitfetch_settings *settings, const char 
 	char *out, size_t out_cap)
 {
 	char logo_name[64];
-	char *file_buf = NULL;
-	const char *logo_text;
 	const char *logo_colors[9];
+	const char *chosen;
 
 	if (out_cap == 0)
 		return;
@@ -240,17 +180,12 @@ shitfetch_logo_main_color(const struct shitfetch_settings *settings, const char 
 	else
 		normalize_logo_name(settings->logo, logo_name, sizeof(logo_name));
 
-	logo_text = find_logo_text(settings, logo_name, &file_buf);
 	palette_for_logo(settings, logo_name, logo_colors);
-
-	const char *chosen = logo_main_color_from_text(logo_text, logo_colors);
+	chosen = logo_colors[0];
 
 	if (settings->logo_color_spec[0] != '\0' &&
-		sfcolor_resolve(settings->logo_color_spec, chosen, out, out_cap)) {
-		if (file_buf) free(file_buf);
+		sfcolor_resolve(settings->logo_color_spec, chosen, out, out_cap))
 		return;
-	}
 
 	snprintf(out, out_cap, "%s", chosen ? chosen : "36");
-	if (file_buf) free(file_buf);
 }
