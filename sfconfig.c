@@ -3,6 +3,7 @@
 #include "sfconfig.h"
 
 #include "sfcolor.h"
+#include "sfutil.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -70,6 +71,10 @@ struct strbuf {
 };
 
 static void json_free(struct json_value *value);
+static int append_config_module_entry(struct shitfetch_settings *settings,
+	enum shitfetch_module module, const char *path, char *err, size_t err_cap);
+static int append_config_colors_entry(struct shitfetch_settings *settings, bool enabled,
+	const char *path, char *err, size_t err_cap);
 
 static int
 config_error(char *err, size_t err_cap, const char *path, const char *fmt, ...)
@@ -964,6 +969,9 @@ module_from_name(const char *name, enum shitfetch_module *out)
 	else if (strcmp(name, "disk") == 0) *out = SHITFETCH_MODULE_DISK;
 	else if (strcmp(name, "packages") == 0 || strcmp(name, "pkgs") == 0) *out = SHITFETCH_MODULE_PACKAGES;
 	else if (strcmp(name, "display") == 0) *out = SHITFETCH_MODULE_DISPLAY;
+	else if (strcmp(name, "locale") == 0 || strcmp(name, "lang") == 0) *out = SHITFETCH_MODULE_LOCALE;
+	else if (strcmp(name, "local_ip") == 0 || strcmp(name, "local-ip") == 0 ||
+		strcmp(name, "ip") == 0) *out = SHITFETCH_MODULE_LOCAL_IP;
 	else return -1;
 	return 0;
 }
@@ -1001,6 +1009,80 @@ clear_modules(struct shitfetch_settings *settings)
 	for (i = 0; i < SHITFETCH_MODULE_COUNT; i++)
 		settings->module_enabled[i] = false;
 	settings->module_count = 0;
+}
+
+int
+shitfetch_apply_modules_csv(struct shitfetch_settings *settings, const char *csv,
+	char *err, size_t err_cap)
+{
+	struct shitfetch_settings next;
+	char *buf;
+	char *part;
+	char *save;
+	bool seen[SHITFETCH_MODULE_COUNT];
+	bool seen_colors = false;
+
+	if (settings == NULL || csv == NULL)
+		return config_error(err, err_cap, NULL, "modules list is empty");
+
+	buf = dup_range(csv, strlen(csv));
+	if (buf == NULL)
+		return config_error(err, err_cap, NULL, "out of memory");
+
+	next = *settings;
+	clear_modules(&next);
+	next.entry_count = 0;
+	memset(seen, 0, sizeof(seen));
+
+	for (part = strtok_r(buf, ",", &save); part != NULL; part = strtok_r(NULL, ",", &save)) {
+		enum shitfetch_module module;
+
+		shitfetch_trim(part);
+		if (part[0] == '\0') {
+			int rc = config_error(err, err_cap, NULL, "empty modules entry");
+
+			free(buf);
+			return rc;
+		}
+		if (strcmp(part, "colors") == 0) {
+			if (seen_colors) {
+				int rc = config_error(err, err_cap, NULL, "duplicate modules entry 'colors'");
+
+				free(buf);
+				return rc;
+			}
+			seen_colors = true;
+			if (append_config_colors_entry(&next, true, NULL, err, err_cap) < 0) {
+				free(buf);
+				return -1;
+			}
+			continue;
+		}
+		if (module_from_name(part, &module) < 0) {
+			int rc = config_error(err, err_cap, NULL, "unknown module '%s'", part);
+
+			free(buf);
+			return rc;
+		}
+		if (seen[module]) {
+			int rc = config_error(err, err_cap, NULL, "duplicate module '%s'", part);
+
+			free(buf);
+			return rc;
+		}
+		seen[module] = true;
+		if (enable_module(&next, module, NULL, err, err_cap) < 0 ||
+			append_config_module_entry(&next, module, NULL, err, err_cap) < 0) {
+			free(buf);
+			return -1;
+		}
+	}
+
+	free(buf);
+	if (next.entry_count == 0)
+		return config_error(err, err_cap, NULL, "modules list is empty");
+	*settings = next;
+	return 0;
 }
 
 static int

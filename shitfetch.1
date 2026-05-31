@@ -37,6 +37,10 @@ and
 Equivalent to
 .BR "\-t TEMPLATE" .
 .TP
+.BI \-\-modules " CSV"
+Set module order from a comma-separated list. Example:
+.BR os,kernel,shell,local-ip .
+.TP
 .BI \-c ", " \-\-config " PATH"
 Load configuration from
 .IR PATH .
@@ -92,15 +96,20 @@ Built-in modules are:
 .BR swap ,
 .BR disk ,
 .BR packages ,
+.BR display ,
+.BR locale ,
 and
-.BR display .
+.BR local-ip .
 .PP
 Aliases include
 .BR dewm ,
 .BR wm/de ,
 .BR terminal ,
+.BR pkgs ,
+.BR lang ,
+.BR local_ip ,
 and
-.BR pkgs .
+.BR ip .
 .SH PACKAGE DETECTION
 The
 .B packages

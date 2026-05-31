@@ -43,6 +43,8 @@ enum shitfetch_module {
 	SHITFETCH_MODULE_DISK,
 	SHITFETCH_MODULE_PACKAGES,
 	SHITFETCH_MODULE_DISPLAY,
+	SHITFETCH_MODULE_LOCALE,
+	SHITFETCH_MODULE_LOCAL_IP,
 	SHITFETCH_MODULE_COUNT,
 };
 
@@ -122,6 +124,8 @@ struct shitfetch_data {
 	char packages[256];
 	char display_id[64];
 	char display[128];
+	char locale[128];
+	char local_ip[64];
 };
 
 void shitfetch_settings_init(struct shitfetch_settings *settings);

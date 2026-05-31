@@ -155,6 +155,10 @@ custom_token_value(const char *name, const struct shitfetch_data *data, const ch
 		return data->dewm;
 	if (strcmp(name, "term") == 0 || strcmp(name, "terminal") == 0)
 		return data->term;
+	if (strcmp(name, "locale") == 0 || strcmp(name, "lang") == 0)
+		return data->locale;
+	if (strcmp(name, "ip") == 0 || strcmp(name, "local_ip") == 0 || strcmp(name, "local-ip") == 0)
+		return data->local_ip;
 	return "";
 }
 
@@ -311,6 +315,10 @@ default_module_key(enum shitfetch_module module)
 		return "pkgs";
 	case SHITFETCH_MODULE_DISPLAY:
 		return "display";
+	case SHITFETCH_MODULE_LOCALE:
+		return "locale";
+	case SHITFETCH_MODULE_LOCAL_IP:
+		return "local ip";
 	default:
 		return "unknown";
 	}
@@ -355,6 +363,10 @@ module_value(enum shitfetch_module module, const struct shitfetch_data *data)
 		return data->packages;
 	case SHITFETCH_MODULE_DISPLAY:
 		return data->display;
+	case SHITFETCH_MODULE_LOCALE:
+		return data->locale;
+	case SHITFETCH_MODULE_LOCAL_IP:
+		return data->local_ip;
 	case SHITFETCH_MODULE_DISK:
 		return data->disk;
 	default:

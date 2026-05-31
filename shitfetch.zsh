@@ -6,6 +6,7 @@ _shitfetch() {
 		'(-v --version)'{-v,--version}'[show version]' \
 		'(-l --logo)'{-l,--logo}'[set logo]:logo:(auto none)' \
 		'(-t --template)'{-t,--template}'[set template]:template:(default mini)' \
+		'--modules[set module order]:modules:(os kernel init uptime host shell wm dewm wm/de term terminal cpu gpu memory swap disk packages pkgs display locale lang local-ip local_ip ip)' \
 		'(-c --config)'{-c,--config}'[load config file]:config file:_files' \
 		'--no-config[skip automatic config loading]'
 }

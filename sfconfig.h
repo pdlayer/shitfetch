@@ -9,5 +9,7 @@
 bool shitfetch_default_config_path(char *buf, size_t cap);
 int shitfetch_load_config(struct shitfetch_settings *settings, const char *path,
 	char *err, size_t err_cap);
+int shitfetch_apply_modules_csv(struct shitfetch_settings *settings, const char *csv,
+	char *err, size_t err_cap);
 
 #endif

@@ -22,6 +22,8 @@ static const enum shitfetch_module default_order[] = {
 	SHITFETCH_MODULE_MEMORY,
 	SHITFETCH_MODULE_SWAP,
 	SHITFETCH_MODULE_DISK,
+	SHITFETCH_MODULE_LOCALE,
+	SHITFETCH_MODULE_LOCAL_IP,
 };
 
 static int
@@ -120,6 +122,7 @@ print_help(FILE *out)
 	fputs("  -v, --version     show version\n", out);
 	fputs("  -l, --logo NAME   set logo name (or none)\n", out);
 	fputs("  -t, --template    set template (default or mini)\n", out);
+	fputs("      --modules CSV set module order, e.g. os,kernel,shell,local-ip\n", out);
 	fputs("  -c, --config PATH load config file\n", out);
 	fputs("      --no-config   skip automatic config loading\n", out);
 }
@@ -138,6 +141,7 @@ main(int argc, char **argv)
 	bool template_set = false;
 	char requested_logo[64];
 	bool logo_set = false;
+	const char *requested_modules = NULL;
 	const char *config_path = NULL;
 	bool explicit_config = false;
 	bool load_config = true;
@@ -205,6 +209,18 @@ main(int argc, char **argv)
 			}
 			continue;
 		}
+		if (strcmp(argv[i], "--modules") == 0) {
+			if (i + 1 >= argc) {
+				fprintf(stderr, "shitfetch: missing value for %s\n", argv[i]);
+				return 1;
+			}
+			requested_modules = argv[++i];
+			continue;
+		}
+		if (strncmp(argv[i], "--modules=", 10) == 0) {
+			requested_modules = argv[i] + 10;
+			continue;
+		}
 		if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--config") == 0) {
 			if (i + 1 >= argc) {
 				fprintf(stderr, "shitfetch: missing value for %s\n", argv[i]);
@@ -247,6 +263,11 @@ main(int argc, char **argv)
 
 	if (template_set)
 		shitfetch_settings_apply_template(&settings, requested_template);
+	if (requested_modules != NULL &&
+		shitfetch_apply_modules_csv(&settings, requested_modules, config_err, sizeof(config_err)) < 0) {
+		fprintf(stderr, "shitfetch: modules: %s\n", config_err);
+		return 1;
+	}
 	if (logo_set) {
 		snprintf(settings.logo, sizeof(settings.logo), "%s", requested_logo);
 		settings.show_logo = strcmp(settings.logo, "none") != 0;

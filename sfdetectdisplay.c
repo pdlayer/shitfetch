@@ -156,10 +156,10 @@ detect_display(char *id, size_t id_cap, char *out, size_t cap)
 				enc = drmModeGetEncoder(fd, conn->encoder_id);
 				if (enc) {
 					crtc = drmModeGetCrtc(fd, enc->crtc_id);
-					if (crtc && crtc->mode_valid) {
+					if (crtc != NULL && crtc->mode_valid)
 						format_display_mode(&crtc->mode, conn, out, cap);
+					if (crtc != NULL)
 						drmModeFreeCrtc(crtc);
-					}
 					drmModeFreeEncoder(enc);
 				}
 				if (out[0] == '\0') {
@@ -182,4 +182,3 @@ detect_display(char *id, size_t id_cap, char *out, size_t cap)
 	if (!found)
 		snprintf(out, cap, "unknown");
 }
-

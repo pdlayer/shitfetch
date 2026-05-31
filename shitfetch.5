@@ -79,6 +79,8 @@ Recognized module names:
 .BR disk ,
 .BR packages ,
 .BR display ,
+.BR locale ,
+.BR local-ip ,
 and
 .BR colors .
 .PP
@@ -86,8 +88,11 @@ Aliases include
 .BR dewm ,
 .BR wm/de ,
 .BR terminal ,
+.BR pkgs ,
+.BR lang ,
+.BR local_ip ,
 and
-.BR pkgs .
+.BR ip .
 .SH ENTRIES ARRAY
 Each array element is an object with exactly one primary action key:
 .TP
@@ -130,6 +135,9 @@ Custom entry strings may reference:
 .BR {swap} ,
 .BR {disk} ,
 .BR {packages} ,
+.BR {locale} ,
+.BR {local-ip} ,
+.BR {ip} ,
 and
 .BR {display} .
 .SH DISK OBJECT
@@ -162,6 +170,8 @@ Array of mount-point strings used as an allow-list.
     "packages",
     "shell",
     "display",
+    "locale",
+    "local-ip",
     "memory"
   ],
   "disk": {

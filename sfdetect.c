@@ -12,8 +12,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <threads.h>
+#include <locale.h>
 #include <dirent.h>
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <netinet/in.h>
 #include <sys/types.h>
 #include <sys/utsname.h>
 #include <time.h>
@@ -791,92 +795,62 @@ detect_kernel(char *out, size_t cap)
 	snprintf(out, cap, "%s", u.release);
 }
 
-
-struct string_detect_task {
-	char *out;
-	size_t cap;
-	void (*fn)(char *, size_t);
-};
-
-struct packages_detect_task {
-	const char *os_id;
-	char *packages;
-	size_t packages_cap;
-};
-
-struct disks_detect_task {
-	const struct shitfetch_settings *settings;
-	struct shitfetch_data *data;
-};
-
-struct display_detect_task {
-	char *id;
-	size_t id_cap;
-	char *out;
-	size_t out_cap;
-};
-
-static int
-run_string_detect(void *arg)
+static void
+detect_locale(char *out, size_t cap)
 {
-	struct string_detect_task *task = arg;
+	const char *value;
 
-	task->fn(task->out, task->cap);
-	return 0;
+	if (out == NULL || cap == 0)
+		return;
+	value = getenv("LC_ALL");
+	if (value == NULL || value[0] == '\0')
+		value = getenv("LC_CTYPE");
+	if (value == NULL || value[0] == '\0')
+		value = getenv("LANG");
+	if (value == NULL || value[0] == '\0')
+		value = setlocale(LC_CTYPE, NULL);
+	if (value == NULL || value[0] == '\0' || strcmp(value, "C") == 0)
+		value = "C";
+	snprintf(out, cap, "%s", value);
 }
 
-static int
-run_packages_detect(void *arg)
+static void
+detect_local_ip(char *out, size_t cap)
 {
-	struct packages_detect_task *task = arg;
+	struct ifaddrs *ifaddr;
+	struct ifaddrs *ifa;
 
-	detect_packages(task->os_id, task->packages, task->packages_cap);
-	return 0;
-}
+	if (out == NULL || cap == 0)
+		return;
+	out[0] = '\0';
+	if (getifaddrs(&ifaddr) != 0) {
+		snprintf(out, cap, "unknown");
+		return;
+	}
 
-static int
-run_disks_detect(void *arg)
-{
-	struct disks_detect_task *task = arg;
+	for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+		const struct sockaddr_in *addr;
+		char ip[INET_ADDRSTRLEN];
 
-	detect_disks(task->settings, task->data);
-	return 0;
-}
+		if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET)
+			continue;
+		if ((ifa->ifa_flags & IFF_LOOPBACK) != 0 || (ifa->ifa_flags & IFF_UP) == 0)
+			continue;
+		addr = (const struct sockaddr_in *)ifa->ifa_addr;
+		if (inet_ntop(AF_INET, &addr->sin_addr, ip, sizeof(ip)) == NULL)
+			continue;
+		snprintf(out, cap, "%s", ip);
+		break;
+	}
 
-static int
-run_display_detect(void *arg)
-{
-	struct display_detect_task *task = arg;
-
-	detect_display(task->id, task->id_cap, task->out, task->out_cap);
-	return 0;
-}
-
-static bool
-start_thread(thrd_t *thread, int (*fn)(void *), void *arg)
-{
-	return thrd_create(thread, fn, arg) == thrd_success;
+	freeifaddrs(ifaddr);
+	if (out[0] == '\0')
+		snprintf(out, cap, "unknown");
 }
 
 void
 shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfetch_data *data)
 {
-	thrd_t dewm_thread;
-	thrd_t term_thread;
-	thrd_t disks_thread;
-	thrd_t packages_thread;
-	thrd_t display_thread;
-	bool dewm_started = false;
-	bool term_started = false;
-	bool disks_started = false;
-	bool packages_started = false;
-	bool display_started = false;
-	struct string_detect_task dewm_task;
-	struct string_detect_task term_task;
-	struct disks_detect_task disks_task;
-	struct packages_detect_task packages_task;
-	struct display_detect_task display_task;
-
 	memset(data, 0, sizeof(*data));
 
 	read_os_release(data->os_id, sizeof(data->os_id), data->os_pretty, sizeof(data->os_pretty));
@@ -900,14 +874,9 @@ shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfet
 	else
 		snprintf(data->shell, sizeof(data->shell), "unknown");
 
-	if (settings->module_enabled[SHITFETCH_MODULE_DEWM]) {
-		dewm_task.out = data->dewm;
-		dewm_task.cap = sizeof(data->dewm);
-		dewm_task.fn = detect_dewm;
-		dewm_started = start_thread(&dewm_thread, run_string_detect, &dewm_task);
-		if (!dewm_started)
-			detect_dewm(data->dewm, sizeof(data->dewm));
-	} else
+	if (settings->module_enabled[SHITFETCH_MODULE_DEWM])
+		detect_dewm(data->dewm, sizeof(data->dewm));
+	else
 		snprintf(data->dewm, sizeof(data->dewm), "unknown");
 
 	if (settings->module_enabled[SHITFETCH_MODULE_HOST])
@@ -915,14 +884,9 @@ shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfet
 	else
 		snprintf(data->host, sizeof(data->host), "unknown");
 
-	if (settings->module_enabled[SHITFETCH_MODULE_TERM]) {
-		term_task.out = data->term;
-		term_task.cap = sizeof(data->term);
-		term_task.fn = detect_term;
-		term_started = start_thread(&term_thread, run_string_detect, &term_task);
-		if (!term_started)
-			detect_term(data->term, sizeof(data->term));
-	} else
+	if (settings->module_enabled[SHITFETCH_MODULE_TERM])
+		detect_term(data->term, sizeof(data->term));
+	else
 		snprintf(data->term, sizeof(data->term), "unknown");
 
 	if (settings->module_enabled[SHITFETCH_MODULE_CPU])
@@ -944,52 +908,36 @@ shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfet
 		snprintf(data->swap, sizeof(data->swap), "unknown");
 	}
 
-	if (settings->module_enabled[SHITFETCH_MODULE_DISK]) {
-		disks_task.settings = settings;
-		disks_task.data = data;
-		disks_started = start_thread(&disks_thread, run_disks_detect, &disks_task);
-		if (!disks_started)
-			detect_disks(settings, data);
-	} else {
+	if (settings->module_enabled[SHITFETCH_MODULE_DISK])
+		detect_disks(settings, data);
+	else {
 		data->disk_count = 1;
 		snprintf(data->disk_mounts[0], sizeof(data->disk_mounts[0]), "/");
 		snprintf(data->disk_values[0], sizeof(data->disk_values[0]), "unknown");
 		snprintf(data->disk, sizeof(data->disk), "unknown");
 	}
 
-	if (settings->module_enabled[SHITFETCH_MODULE_PACKAGES]) {
-		packages_task.os_id = data->os_id;
-		packages_task.packages = data->packages;
-		packages_task.packages_cap = sizeof(data->packages);
-		packages_started = start_thread(&packages_thread, run_packages_detect, &packages_task);
-		if (!packages_started)
-			detect_packages(data->os_id, data->packages, sizeof(data->packages));
-	} else
+	if (settings->module_enabled[SHITFETCH_MODULE_PACKAGES])
+		detect_packages(data->os_id, data->packages, sizeof(data->packages));
+	else
 		snprintf(data->packages, sizeof(data->packages), "unknown");
 
-	if (settings->module_enabled[SHITFETCH_MODULE_DISPLAY]) {
-		display_task.id = data->display_id;
-		display_task.id_cap = sizeof(data->display_id);
-		display_task.out = data->display;
-		display_task.out_cap = sizeof(data->display);
-		display_started = start_thread(&display_thread, run_display_detect, &display_task);
-		if (!display_started)
-			detect_display(data->display_id, sizeof(data->display_id), data->display, sizeof(data->display));
-	} else {
+	if (settings->module_enabled[SHITFETCH_MODULE_DISPLAY])
+		detect_display(data->display_id, sizeof(data->display_id), data->display, sizeof(data->display));
+	else {
 		snprintf(data->display_id, sizeof(data->display_id), "unknown");
 		snprintf(data->display, sizeof(data->display), "unknown");
 	}
 
-	if (dewm_started)
-		thrd_join(dewm_thread, NULL);
-	if (term_started)
-		thrd_join(term_thread, NULL);
-	if (disks_started)
-		thrd_join(disks_thread, NULL);
-	if (packages_started)
-		thrd_join(packages_thread, NULL);
-	if (display_started)
-		thrd_join(display_thread, NULL);
+	if (settings->module_enabled[SHITFETCH_MODULE_LOCALE])
+		detect_locale(data->locale, sizeof(data->locale));
+	else
+		snprintf(data->locale, sizeof(data->locale), "unknown");
+
+	if (settings->module_enabled[SHITFETCH_MODULE_LOCAL_IP])
+		detect_local_ip(data->local_ip, sizeof(data->local_ip));
+	else
+		snprintf(data->local_ip, sizeof(data->local_ip), "unknown");
 
 	if (data->os_pretty[0] == '\0')
 		snprintf(data->os_pretty, sizeof(data->os_pretty), "unknown");
@@ -999,4 +947,8 @@ shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfet
 		snprintf(data->gpu, sizeof(data->gpu), "unknown");
 	if (data->display[0] == '\0')
 		snprintf(data->display, sizeof(data->display), "unknown");
+	if (data->locale[0] == '\0')
+		snprintf(data->locale, sizeof(data->locale), "unknown");
+	if (data->local_ip[0] == '\0')
+		snprintf(data->local_ip, sizeof(data->local_ip), "unknown");
 }
