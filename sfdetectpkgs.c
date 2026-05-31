@@ -240,7 +240,40 @@ count_portage_vardb(void)
 
 DEFINE_PATH_COUNTER(count_sorcery, count_nonhidden_dir_entries, "/var/log/sorcery/install")
 DEFINE_PATH_COUNTER(count_kiss_installed, count_nonhidden_dir_entries, "/var/db/kiss/installed")
+DEFINE_PATH_COUNTER(count_cpt_installed, count_nonhidden_dir_entries, "/var/db/cpt/installed")
 DEFINE_PATH_COUNTER(count_tazpkg_installed, count_nonhidden_dir_entries, "/var/lib/tazpkg/installed")
+
+static int
+count_whitespace_tuple_file(const char *path)
+{
+	FILE *fp;
+	char line[512];
+	int count = 0;
+
+	fp = fopen(path, "r");
+	if (fp == NULL)
+		return -1;
+	while (fgets(line, sizeof(line), fp) != NULL) {
+		char first[128];
+		char second[128];
+		char *p = line;
+
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (*p == '\0' || *p == '\n' || *p == '#')
+			continue;
+		if (sscanf(p, "%127s %127s", first, second) == 2)
+			count++;
+	}
+	fclose(fp);
+	return count;
+}
+
+static int
+count_butch(void)
+{
+	return count_whitespace_tuple_file("/var/lib/butch.db");
+}
 
 static int
 count_pisi_package_path(const char *path)
@@ -332,10 +365,58 @@ count_pkgutils_db_file(const char *path)
 	return count;
 }
 
+static bool
+has_cards(void)
+{
+	return shitfetch_file_exists("/etc/cards.conf");
+}
+
+static int
+count_cards(void)
+{
+	if (!has_cards())
+		return -1;
+	return count_pkgutils_db_file("/var/lib/pkg/db");
+}
+
 static int
 count_pkgutils(void)
 {
+	if (has_cards())
+		return -1;
 	return count_pkgutils_db_file("/var/lib/pkg/db");
+}
+
+static int
+count_gobo_programs_path(const char *path)
+{
+	DIR *dir;
+	struct dirent *ent;
+	int count = 0;
+
+	dir = opendir(path);
+	if (dir == NULL)
+		return -1;
+	while ((ent = readdir(dir)) != NULL) {
+		char current_path[SHITFETCH_MAX_PATH];
+		struct stat st;
+
+		if (ent->d_name[0] == '.')
+			continue;
+		snprintf(current_path, sizeof(current_path), "%s/%s/Current", path, ent->d_name);
+		if (stat(current_path, &st) == 0 && S_ISDIR(st.st_mode))
+			count++;
+	}
+	closedir(dir);
+	return count;
+}
+
+static int
+count_gobo(void)
+{
+	if (!shitfetch_file_exists("/System/Index"))
+		return -1;
+	return count_gobo_programs_path("/Programs");
 }
 
 static int
@@ -800,10 +881,14 @@ static const struct package_spec package_specs[] = {
 	{"portage", count_portage_vardb, count_portage_vardb_path, "var/db/pkg"},
 	{"sorcery", count_sorcery, count_sorcery_path, "var/log/sorcery/install"},
 	{"kiss", count_kiss_installed, count_kiss_installed_path, "var/db/kiss/installed"},
+	{"cpt", count_cpt_installed, count_cpt_installed_path, "var/db/cpt/installed"},
+	{"butch", count_butch, count_whitespace_tuple_file, "var/lib/butch.db"},
 	{"tazpkg", count_tazpkg_installed, count_tazpkg_installed_path, "var/lib/tazpkg/installed"},
 	{"pisi", count_pisi, count_pisi_package_path, "var/lib/pisi/package"},
 	{"pkgsrc", count_pkgsrc, count_pkgsrc_path, "var/db/pkg"},
+	{"cards", count_cards, count_pkgutils_db_file, "var/lib/pkg/db"},
 	{"pkgutils", count_pkgutils, count_pkgutils_db_file, "var/lib/pkg/db"},
+	{"gobo", count_gobo, count_gobo_programs_path, "Programs"},
 	{"opkg", count_opkg, count_opkg_status_file, "usr/lib/opkg/status"},
 	{"eopkg", count_eopkg, count_eopkg_path, "var/lib/eopkg/package"},
 	{"swupd", count_swupd, count_swupd_path, "usr/share/clear/bundles"},
