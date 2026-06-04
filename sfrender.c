@@ -7,11 +7,29 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
 
 static void
 build_identity(char *user_out, size_t user_cap, char *host_out, size_t host_cap)
 {
+#ifdef _WIN32
+	const char *user = getenv("USERNAME");
+	DWORD host_size = (DWORD)host_cap;
+
+	if (user_cap == 0 || host_cap == 0)
+		return;
+	if (user == NULL || user[0] == '\0')
+		user = getenv("USER");
+	if (user == NULL || user[0] == '\0')
+		user = "user";
+	if (GetComputerNameA(host_out, &host_size) == 0)
+		snprintf(host_out, host_cap, "host");
+	snprintf(user_out, user_cap, "%s", user);
+#else
 	const char *user = getenv("USER");
 	char host[128];
 	char *dot;
@@ -30,6 +48,7 @@ build_identity(char *user_out, size_t user_cap, char *host_out, size_t host_cap)
 	}
 	snprintf(user_out, user_cap, "%s", user);
 	snprintf(host_out, host_cap, "%s", host);
+#endif
 }
 
 static void

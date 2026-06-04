@@ -8,9 +8,95 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif
+#include <windows.h>
+#else
 #include <dirent.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#endif
+
+#ifdef _WIN32
+static bool
+append_pkg_segment(char *dst, size_t cap, const char *segment)
+{
+	size_t have = strlen(dst);
+	if (have == 0)
+		return snprintf(dst, cap, "%s", segment) > 0;
+	if (have + 2 >= cap)
+		return false;
+	dst[have++] = ',';
+	dst[have++] = ' ';
+	dst[have] = '\0';
+	strncat(dst, segment, cap - have - 1);
+	return true;
+}
+
+static int
+count_dirs(const char *path)
+{
+	WIN32_FIND_DATAA fd;
+	HANDLE h;
+	char pattern[SHITFETCH_MAX_PATH];
+	int count = 0;
+
+	if (path == NULL || path[0] == '\0')
+		return -1;
+	snprintf(pattern, sizeof(pattern), "%s\\*", path);
+	h = FindFirstFileA(pattern, &fd);
+	if (h == INVALID_HANDLE_VALUE)
+		return -1;
+	do {
+		if (fd.cFileName[0] == '.')
+			continue;
+		if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+			count++;
+	} while (FindNextFileA(h, &fd));
+	FindClose(h);
+	return count;
+}
+
+static bool
+append_pkg_count(char *packages, size_t packages_cap, const char *label, int count)
+{
+	char seg[64];
+	if (count <= 0)
+		return false;
+	snprintf(seg, sizeof(seg), "%d (%s)", count, label);
+	append_pkg_segment(packages, packages_cap, seg);
+	return true;
+}
+
+void
+detect_packages(const char *os_id, char *packages, size_t packages_cap)
+{
+	const char *programdata = getenv("ProgramData");
+	const char *userprofile = getenv("USERPROFILE");
+	const char *scoop = getenv("SCOOP");
+	char path[SHITFETCH_MAX_PATH];
+	bool has_any = false;
+
+	(void)os_id;
+	packages[0] = '\0';
+	if (scoop != NULL && scoop[0] != '\0') {
+		snprintf(path, sizeof(path), "%s\\apps", scoop);
+		has_any |= append_pkg_count(packages, packages_cap, "scoop", count_dirs(path));
+	}
+	if (!has_any && userprofile != NULL && userprofile[0] != '\0') {
+		snprintf(path, sizeof(path), "%s\\scoop\\apps", userprofile);
+		has_any |= append_pkg_count(packages, packages_cap, "scoop", count_dirs(path));
+	}
+	if (programdata != NULL && programdata[0] != '\0') {
+		snprintf(path, sizeof(path), "%s\\chocolatey\\lib", programdata);
+		has_any |= append_pkg_count(packages, packages_cap, "choco", count_dirs(path));
+	}
+	if (!has_any)
+		snprintf(packages, packages_cap, "unknown");
+}
+#else
 
 static bool
 append_pkg_segment(char *dst, size_t cap, const char *segment)
@@ -1029,3 +1115,4 @@ detect_packages(const char *os_id, char *packages, size_t packages_cap)
 		snprintf(packages, packages_cap, "unknown");
 	}
 }
+#endif

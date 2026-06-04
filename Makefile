@@ -2,7 +2,16 @@ include config.mk
 
 BUILD_DIR = build
 TARGET_NAME = shitfetch
-TARGET = $(BUILD_DIR)/$(TARGET_NAME)
+EXEEXT =
+ifeq ($(OS),Windows_NT)
+EXEEXT = .exe
+MKDIR_P = if not exist "$(BUILD_DIR)" mkdir "$(BUILD_DIR)"
+RM_RF_BUILD = if exist "$(BUILD_DIR)" rmdir /S /Q "$(BUILD_DIR)"
+else
+MKDIR_P = mkdir -p $(BUILD_DIR)
+RM_RF_BUILD = rm -rf $(BUILD_DIR)
+endif
+TARGET = $(BUILD_DIR)/$(TARGET_NAME)$(EXEEXT)
 SHITFETCH_VERSION = $(shell sed -n 's/^#define SHITFETCH_VERSION "\([^"]*\)"/\1/p' sf.h)
 DEB_RELEASE ?= 1
 DEB_VERSION ?= $(SHITFETCH_VERSION)-$(DEB_RELEASE)
@@ -37,16 +46,15 @@ $(TARGET): $(OBJ) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -o $@ $(OBJ) $(LDLIBS)
 
 $(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
+	$(MKDIR_P)
 
-$(BUILD_DIR)/%.o: %.c sf.h | $(BUILD_DIR)
+$(OBJ): $(BUILD_DIR)/%.o: %.c sf.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/sflogo.o: sflogo.c sf.h sfascii.h sfminiascii.h sfansi.h sfcolor.h | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+$(BUILD_DIR)/sflogo.o: sfascii.h sfminiascii.h sfansi.h sfcolor.h
 
 clean:
-	rm -rf $(BUILD_DIR)
+	$(RM_RF_BUILD)
 
 deb: $(TARGET)
 	rm -rf $(DEB_ROOT)

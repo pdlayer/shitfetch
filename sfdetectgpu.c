@@ -8,8 +8,56 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#ifdef _WIN32
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif
+#include <windows.h>
+#else
 #include <dirent.h>
 #include <sys/types.h>
+#endif
+
+#ifdef _WIN32
+void
+detect_gpu(struct shitfetch_data *data)
+{
+	data->gpu[0] = '\0';
+	data->gpu_count = 0;
+	for (DWORD i = 0; data->gpu_count < SHITFETCH_MAX_GPUS; i++) {
+		DISPLAY_DEVICEA dd;
+		bool seen = false;
+
+		memset(&dd, 0, sizeof(dd));
+		dd.cb = sizeof(dd);
+		if (!EnumDisplayDevicesA(NULL, i, &dd, 0))
+			break;
+		if ((dd.StateFlags & DISPLAY_DEVICE_MIRRORING_DRIVER) != 0)
+			continue;
+		if (dd.DeviceString[0] == '\0')
+			continue;
+		for (size_t j = 0; j < data->gpu_count; j++) {
+			if (strcmp(data->gpu_values[j], dd.DeviceString) == 0) {
+				seen = true;
+				break;
+			}
+		}
+		if (seen)
+			continue;
+		snprintf(data->gpu_ids[data->gpu_count], sizeof(data->gpu_ids[data->gpu_count]),
+			"%s", dd.DeviceName);
+		snprintf(data->gpu_values[data->gpu_count], sizeof(data->gpu_values[data->gpu_count]),
+			"%s", dd.DeviceString);
+		data->gpu_count++;
+		if (data->gpu_count >= SHITFETCH_MAX_GPUS)
+			break;
+	}
+	if (data->gpu_count > 0)
+		snprintf(data->gpu, sizeof(data->gpu), "%s", data->gpu_values[0]);
+	else
+		snprintf(data->gpu, sizeof(data->gpu), "unknown");
+}
+#else
 
 static bool
 find_pci_ids_path(char *out, size_t cap)
@@ -252,3 +300,4 @@ detect_gpu(struct shitfetch_data *data)
 	}
 	snprintf(data->gpu, sizeof(data->gpu), "unknown");
 }
+#endif

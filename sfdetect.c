@@ -13,6 +13,18 @@
 #include <string.h>
 #include <ctype.h>
 #include <locale.h>
+#ifdef _WIN32
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <iphlpapi.h>
+#include <lmcons.h>
+#include <tlhelp32.h>
+#include <winreg.h>
+#else
 #include <dirent.h>
 #include <arpa/inet.h>
 #include <ifaddrs.h>
@@ -22,6 +34,7 @@
 #include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
+#endif
 
 void
 read_first_line(const char *path, char *out, size_t cap)
@@ -70,6 +83,315 @@ read_keyed_line(const char *path, const char *key, char *out, size_t cap)
 	return false;
 }
 
+#ifdef _WIN32
+typedef LONG (WINAPI *RtlGetVersionFn)(OSVERSIONINFOW *);
+
+static void
+detect_windows_version(DWORD *major, DWORD *minor, DWORD *build)
+{
+	OSVERSIONINFOW info;
+	HMODULE ntdll;
+	RtlGetVersionFn rtl_get_version;
+	FARPROC proc;
+
+	*major = 0;
+	*minor = 0;
+	*build = 0;
+	ntdll = GetModuleHandleA("ntdll.dll");
+	proc = ntdll != NULL ? GetProcAddress(ntdll, "RtlGetVersion") : NULL;
+	memcpy(&rtl_get_version, &proc, sizeof(rtl_get_version));
+	if (rtl_get_version == NULL)
+		return;
+	memset(&info, 0, sizeof(info));
+	info.dwOSVersionInfoSize = sizeof(info);
+	if (rtl_get_version(&info) == 0) {
+		*major = info.dwMajorVersion;
+		*minor = info.dwMinorVersion;
+		*build = info.dwBuildNumber;
+	}
+}
+
+static void
+read_windows_os(char *id, size_t id_cap, char *pretty, size_t pretty_cap)
+{
+	DWORD major;
+	DWORD minor;
+	DWORD build;
+
+	detect_windows_version(&major, &minor, &build);
+	if (major == 10 && build >= 22000) {
+		snprintf(id, id_cap, "windows_11");
+		snprintf(pretty, pretty_cap, "Windows 11 (build %lu)", (unsigned long)build);
+	} else if (major == 10) {
+		snprintf(id, id_cap, "windows_10");
+		snprintf(pretty, pretty_cap, "Windows 10 (build %lu)", (unsigned long)build);
+	} else if (major == 6 && minor == 3) {
+		snprintf(id, id_cap, "windows_8.1");
+		snprintf(pretty, pretty_cap, "Windows 8.1");
+	} else if (major == 6 && minor == 2) {
+		snprintf(id, id_cap, "windows_8");
+		snprintf(pretty, pretty_cap, "Windows 8");
+	} else if (major == 6 && minor == 1) {
+		snprintf(id, id_cap, "windows_7");
+		snprintf(pretty, pretty_cap, "Windows 7");
+	} else if (major != 0) {
+		snprintf(id, id_cap, "windows");
+		snprintf(pretty, pretty_cap, "Windows %lu.%lu (build %lu)",
+			(unsigned long)major, (unsigned long)minor, (unsigned long)build);
+	} else {
+		snprintf(id, id_cap, "windows");
+		snprintf(pretty, pretty_cap, "Windows");
+	}
+}
+
+static void
+format_duration(unsigned long long sec, char *out, size_t cap)
+{
+	unsigned long long days = sec / 86400ULL;
+	unsigned long long hours = (sec % 86400ULL) / 3600ULL;
+	unsigned long long mins = (sec % 3600ULL) / 60ULL;
+
+	if (days > 0)
+		snprintf(out, cap, "%llud %lluh %llum", days, hours, mins);
+	else if (hours > 0)
+		snprintf(out, cap, "%lluh %llum", hours, mins);
+	else
+		snprintf(out, cap, "%llum", mins);
+}
+
+static void
+detect_uptime(char *out, size_t cap)
+{
+	format_duration((unsigned long long)(GetTickCount64() / 1000ULL), out, cap);
+}
+
+static void
+detect_shell(char *out, size_t cap)
+{
+	HANDLE snap;
+	PROCESSENTRY32 pe;
+	DWORD pid = GetCurrentProcessId();
+	DWORD parent = 0;
+	char name[128] = "";
+	size_t len;
+
+	snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (snap != INVALID_HANDLE_VALUE) {
+		memset(&pe, 0, sizeof(pe));
+		pe.dwSize = sizeof(pe);
+		if (Process32First(snap, &pe)) {
+			do {
+				if (pe.th32ProcessID == pid) {
+					parent = pe.th32ParentProcessID;
+					break;
+				}
+			} while (Process32Next(snap, &pe));
+		}
+		if (parent != 0) {
+			memset(&pe, 0, sizeof(pe));
+			pe.dwSize = sizeof(pe);
+			if (Process32First(snap, &pe)) {
+				do {
+					if (pe.th32ProcessID == parent) {
+						snprintf(name, sizeof(name), "%s", pe.szExeFile);
+						break;
+					}
+				} while (Process32Next(snap, &pe));
+			}
+		}
+		CloseHandle(snap);
+	}
+	if (name[0] == '\0') {
+		const char *shell = getenv("SHELL");
+
+		if (shell == NULL || shell[0] == '\0')
+			shell = getenv("ComSpec");
+		if (shell == NULL || shell[0] == '\0')
+			shell = getenv("COMSPEC");
+		shitfetch_basename(shell != NULL ? shell : "unknown", name, sizeof(name));
+	}
+	len = strlen(name);
+	if (len > 4 && _stricmp(name + len - 4, ".exe") == 0)
+		name[len - 4] = '\0';
+	snprintf(out, cap, "%s", name[0] != '\0' ? name : "unknown");
+}
+
+static void
+detect_dewm(char *out, size_t cap)
+{
+	snprintf(out, cap, "Explorer");
+}
+
+static void
+detect_init(char *out, size_t cap)
+{
+	snprintf(out, cap, "Service Control Manager");
+}
+
+static void
+detect_term(char *out, size_t cap)
+{
+	const char *value = getenv("TERM_PROGRAM");
+	if (value != NULL && value[0] != '\0') {
+		snprintf(out, cap, "%s", value);
+		return;
+	}
+	if (getenv("WT_SESSION") != NULL) {
+		snprintf(out, cap, "Windows Terminal");
+		return;
+	}
+	if (getenv("ConEmuANSI") != NULL) {
+		snprintf(out, cap, "ConEmu");
+		return;
+	}
+	if (getenv("ANSICON") != NULL) {
+		snprintf(out, cap, "ANSICON");
+		return;
+	}
+	snprintf(out, cap, "console");
+}
+
+static void
+detect_cpu(char *out, size_t cap)
+{
+	HKEY key;
+	char value[256];
+	DWORD value_size = sizeof(value);
+
+	out[0] = '\0';
+	if (RegOpenKeyExA(HKEY_LOCAL_MACHINE,
+	    "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", 0, KEY_READ, &key) == ERROR_SUCCESS) {
+		if (RegQueryValueExA(key, "ProcessorNameString", NULL, NULL,
+		    (LPBYTE)value, &value_size) == ERROR_SUCCESS) {
+			value[sizeof(value) - 1] = '\0';
+			shitfetch_trim(value);
+			snprintf(out, cap, "%s", value);
+		}
+		RegCloseKey(key);
+	}
+	if (out[0] == '\0')
+		snprintf(out, cap, "unknown");
+}
+
+static void
+detect_memory_swap(char *mem_out, size_t mem_cap, char *swap_out, size_t swap_cap)
+{
+	MEMORYSTATUSEX st;
+	unsigned long long total_mb;
+	unsigned long long used_mb;
+	unsigned long long swap_total_mb;
+	unsigned long long swap_used_mb;
+
+	memset(&st, 0, sizeof(st));
+	st.dwLength = sizeof(st);
+	if (!GlobalMemoryStatusEx(&st)) {
+		snprintf(mem_out, mem_cap, "unknown");
+		snprintf(swap_out, swap_cap, "unknown");
+		return;
+	}
+	total_mb = st.ullTotalPhys / (1024ULL * 1024ULL);
+	used_mb = (st.ullTotalPhys - st.ullAvailPhys) / (1024ULL * 1024ULL);
+	snprintf(mem_out, mem_cap, "%lluMB / %lluMB (%%{%lu})",
+		used_mb, total_mb, (unsigned long)st.dwMemoryLoad);
+
+	swap_total_mb = st.ullTotalPageFile / (1024ULL * 1024ULL);
+	swap_used_mb = (st.ullTotalPageFile - st.ullAvailPageFile) / (1024ULL * 1024ULL);
+	snprintf(swap_out, swap_cap, "%lluMB / %lluMB (%%{%u})",
+		swap_used_mb, swap_total_mb,
+		swap_total_mb == 0 ? 0 : (unsigned int)((swap_used_mb * 100ULL) / swap_total_mb));
+}
+
+static void
+detect_host(char *out, size_t cap)
+{
+	DWORD size = (DWORD)cap;
+	if (GetComputerNameA(out, &size) == 0)
+		snprintf(out, cap, "unknown");
+}
+
+static void
+detect_kernel(char *out, size_t cap)
+{
+	DWORD major;
+	DWORD minor;
+	DWORD build;
+
+	detect_windows_version(&major, &minor, &build);
+	if (major != 0)
+		snprintf(out, cap, "%lu.%lu.%lu", (unsigned long)major, (unsigned long)minor, (unsigned long)build);
+	else
+		snprintf(out, cap, "unknown");
+}
+
+static void
+detect_locale(char *out, size_t cap)
+{
+	char name[LOCALE_NAME_MAX_LENGTH];
+	if (GetLocaleInfoA(LOCALE_USER_DEFAULT, LOCALE_SNAME, name, sizeof(name)) > 0) {
+		snprintf(out, cap, "%s", name);
+		return;
+	}
+	if (GetLocaleInfoA(LOCALE_USER_DEFAULT, LOCALE_SABBREVLANGNAME, name, sizeof(name)) > 0) {
+		snprintf(out, cap, "%s", name);
+		return;
+	}
+	if (GetUserDefaultLCID() != 0) {
+		snprintf(out, cap, "%lu", (unsigned long)GetUserDefaultLCID());
+		return;
+	}
+	snprintf(out, cap, "%s", setlocale(LC_CTYPE, NULL) != NULL ? setlocale(LC_CTYPE, NULL) : "C");
+}
+
+static void
+detect_local_ip(char *out, size_t cap)
+{
+	IP_ADAPTER_ADDRESSES *addrs;
+	IP_ADAPTER_ADDRESSES *adapter;
+	ULONG len = 15000;
+	DWORD ret;
+
+	out[0] = '\0';
+	addrs = malloc(len);
+	if (addrs == NULL) {
+		snprintf(out, cap, "unknown");
+		return;
+	}
+	ret = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+		GAA_FLAG_SKIP_DNS_SERVER, NULL, addrs, &len);
+	if (ret == ERROR_BUFFER_OVERFLOW) {
+		free(addrs);
+		addrs = malloc(len);
+		if (addrs != NULL)
+			ret = GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+				GAA_FLAG_SKIP_DNS_SERVER, NULL, addrs, &len);
+	}
+	if (addrs == NULL || ret != NO_ERROR) {
+		free(addrs);
+		snprintf(out, cap, "unknown");
+		return;
+	}
+	for (adapter = addrs; adapter != NULL; adapter = adapter->Next) {
+		IP_ADAPTER_UNICAST_ADDRESS *ua;
+		if (adapter->OperStatus != IfOperStatusUp)
+			continue;
+		for (ua = adapter->FirstUnicastAddress; ua != NULL; ua = ua->Next) {
+			struct sockaddr_in *sa;
+			if (ua->Address.lpSockaddr == NULL || ua->Address.lpSockaddr->sa_family != AF_INET)
+				continue;
+			sa = (struct sockaddr_in *)ua->Address.lpSockaddr;
+			if ((ntohl(sa->sin_addr.s_addr) >> 24) == 127)
+				continue;
+			if (InetNtopA(AF_INET, &sa->sin_addr, out, (DWORD)cap) != NULL) {
+				free(addrs);
+				return;
+			}
+		}
+	}
+	free(addrs);
+	snprintf(out, cap, "unknown");
+}
+
+#else
 
 static int
 read_proc_stat(pid_t pid, char *comm, size_t comm_cap, pid_t *ppid_out)
@@ -847,13 +1169,18 @@ detect_local_ip(char *out, size_t cap)
 	if (out[0] == '\0')
 		snprintf(out, cap, "unknown");
 }
+#endif
 
 void
 shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfetch_data *data)
 {
 	memset(data, 0, sizeof(*data));
 
+#ifdef _WIN32
+	read_windows_os(data->os_id, sizeof(data->os_id), data->os_pretty, sizeof(data->os_pretty));
+#else
 	read_os_release(data->os_id, sizeof(data->os_id), data->os_pretty, sizeof(data->os_pretty));
+#endif
 	if (settings->module_enabled[SHITFETCH_MODULE_KERNEL])
 		detect_kernel(data->kernel, sizeof(data->kernel));
 	else

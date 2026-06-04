@@ -1481,6 +1481,18 @@ shitfetch_default_config_path(char *buf, size_t cap)
 		n = snprintf(buf, cap, "%s/shitfetch/config.jsonc", xdg);
 		return n > 0 && (size_t)n < cap;
 	}
+#ifdef _WIN32
+	home = getenv("APPDATA");
+	if (home != NULL && home[0] != '\0') {
+		n = snprintf(buf, cap, "%s\\shitfetch\\config.jsonc", home);
+		return n > 0 && (size_t)n < cap;
+	}
+	home = getenv("USERPROFILE");
+	if (home != NULL && home[0] != '\0') {
+		n = snprintf(buf, cap, "%s\\.config\\shitfetch\\config.jsonc", home);
+		return n > 0 && (size_t)n < cap;
+	}
+#endif
 	home = getenv("HOME");
 	if (home == NULL || home[0] == '\0')
 		return false;
