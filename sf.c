@@ -2,9 +2,11 @@
 
 #include "sf.h"
 #include "sfconfig.h"
+#include "sfspin.h"
 #include "sfutil.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const enum shitfetch_module default_order[] = {
@@ -105,6 +107,17 @@ shitfetch_settings_init(struct shitfetch_settings *settings)
 	settings->disk_all = true;
 	settings->disk_show_fs = true;
 	snprintf(settings->ascii_dir, sizeof(settings->ascii_dir), "%s", SHITFETCH_ASCII_DIR);
+	settings->spin.enabled = false;
+	settings->spin.axis = SHITFETCH_SPIN_AXIS_XY;
+	settings->spin.light = SHITFETCH_SPIN_LIGHT_TOP_LEFT;
+	settings->spin.shade = SHITFETCH_SPIN_SHADE_AUTO;
+	settings->spin.speed = 1.0f;
+	settings->spin.size = 1.0f;
+	settings->spin.depth = 0.0f;
+	settings->spin.height = 0;
+	settings->spin.frames = 0;
+	settings->spin.fps = 30;
+	snprintf(settings->spin.ramp, sizeof(settings->spin.ramp), "%s", SHITFETCH_SPIN_RAMP_DEFAULT);
 
 	shitfetch_settings_apply_template(settings, SHITFETCH_TEMPLATE_DEFAULT);
 }
@@ -125,6 +138,192 @@ print_help(FILE *out)
 	fputs("      --modules CSV set module order, e.g. os,kernel,shell,local-ip\n", out);
 	fputs("  -c, --config PATH load config file\n", out);
 	fputs("      --no-config   skip automatic config loading\n", out);
+	fputs("\n", out);
+	fputs("spin options:\n", out);
+	fputs("      --spin[=AXIS] animate the logo as spinning 2.5D relief (x, y or xy)\n", out);
+	fputs("      --spin-speed N    radians per second (0.05-20, default 1)\n", out);
+	fputs("      --spin-size N     projection scale (0.5-5, default 1)\n", out);
+	fputs("      --spin-depth N    relief thickness (0.1-10, 0 = auto)\n", out);
+	fputs("      --spin-height N   relief rows (6-200, 0 = auto)\n", out);
+	fputs("      --spin-frames N   stop after N frames (0 = until a key is pressed)\n", out);
+	fputs("      --spin-fps N      frames per second (1-120, default 30)\n", out);
+	fputs("      --spin-light DIR  light direction (top-left, top, front, right, ...)\n", out);
+	fputs("      --spin-shade MODE relief glyphs (auto, ascii, braille, blocks)\n", out);
+	fputs("      --spin-chars STR  shading ramp from darkest to brightest\n", out);
+}
+
+struct spin_flags {
+	bool enabled;
+	bool axis;
+	bool light;
+	bool shade;
+	bool speed;
+	bool size;
+	bool depth;
+	bool height;
+	bool frames;
+	bool fps;
+	bool ramp;
+};
+
+/* 0 = argv[*i] is not this flag, 1 = matched and *value is set, -1 = matched but the
+   value is missing. The `--name VALUE` form advances *i past the value. */
+static int
+flag_value(char **argv, int argc, int *i, const char *name, const char **value)
+{
+	size_t n = strlen(name);
+
+	if (strcmp(argv[*i], name) == 0) {
+		if (*i + 1 >= argc)
+			return -1;
+		*value = argv[++(*i)];
+		return 1;
+	}
+	if (strncmp(argv[*i], name, n) == 0 && argv[*i][n] == '=') {
+		*value = argv[*i] + n + 1;
+		return 1;
+	}
+	return 0;
+}
+
+static bool
+parse_float(const char *s, float *out)
+{
+	char *end = NULL;
+	double v;
+
+	if (s == NULL || s[0] == '\0')
+		return false;
+	v = strtod(s, &end);
+	if (end == NULL || *end != '\0')
+		return false;
+	*out = (float)v;
+	return true;
+}
+
+static bool
+parse_long(const char *s, long *out)
+{
+	char *end = NULL;
+	long v;
+
+	if (s == NULL || s[0] == '\0')
+		return false;
+	v = strtol(s, &end, 10);
+	if (end == NULL || *end != '\0')
+		return false;
+	*out = v;
+	return true;
+}
+
+/* 0 = not a spin flag, 1 = consumed, -1 = bad or missing value (already reported). */
+static int
+parse_spin_arg(char **argv, int argc, int *i, struct shitfetch_spin *spin, struct spin_flags *set)
+{
+	const char *flag = argv[*i];
+	const char *value = NULL;
+	float f;
+	long n;
+	int m;
+
+	if (strcmp(flag, "--spin") == 0) {
+		spin->enabled = true;
+		set->enabled = true;
+		return 1;
+	}
+	if (strncmp(flag, "--spin=", 7) == 0) {
+		if (!shitfetch_spin_parse_axis(flag + 7, &spin->axis)) {
+			fprintf(stderr, "shitfetch: unknown spin axis: %s\n", flag + 7);
+			return -1;
+		}
+		spin->enabled = true;
+		set->enabled = true;
+		set->axis = true;
+		return 1;
+	}
+	if (strncmp(flag, "--spin-", 7) != 0)
+		return 0;
+
+	m = flag_value(argv, argc, i, "--spin-light", &value);
+	if (m != 0) {
+		if (m < 0 || !shitfetch_spin_parse_light(value, &spin->light)) {
+			fprintf(stderr, "shitfetch: unknown spin light: %s\n", m < 0 ? "(missing)" : value);
+			return -1;
+		}
+		set->light = true;
+		return 1;
+	}
+	m = flag_value(argv, argc, i, "--spin-shade", &value);
+	if (m != 0) {
+		if (m < 0 || !shitfetch_spin_parse_shade(value, &spin->shade)) {
+			fprintf(stderr, "shitfetch: unknown spin shade: %s\n", m < 0 ? "(missing)" : value);
+			return -1;
+		}
+		set->shade = true;
+		return 1;
+	}
+	m = flag_value(argv, argc, i, "--spin-chars", &value);
+	if (m != 0) {
+		if (m < 0 || value[0] == '\0') {
+			fprintf(stderr, "shitfetch: --spin-chars needs a non-empty ramp\n");
+			return -1;
+		}
+		snprintf(spin->ramp, sizeof(spin->ramp), "%s", value);
+		set->ramp = true;
+		return 1;
+	}
+	m = flag_value(argv, argc, i, "--spin-speed", &value);
+	if (m != 0) {
+		if (m < 0 || !parse_float(value, &f))
+			goto bad;
+		spin->speed = f;
+		set->speed = true;
+		return 1;
+	}
+	m = flag_value(argv, argc, i, "--spin-size", &value);
+	if (m != 0) {
+		if (m < 0 || !parse_float(value, &f))
+			goto bad;
+		spin->size = f;
+		set->size = true;
+		return 1;
+	}
+	m = flag_value(argv, argc, i, "--spin-depth", &value);
+	if (m != 0) {
+		if (m < 0 || !parse_float(value, &f))
+			goto bad;
+		spin->depth = f;
+		set->depth = true;
+		return 1;
+	}
+	m = flag_value(argv, argc, i, "--spin-height", &value);
+	if (m != 0) {
+		if (m < 0 || !parse_long(value, &n))
+			goto bad;
+		spin->height = (int)n;
+		set->height = true;
+		return 1;
+	}
+	m = flag_value(argv, argc, i, "--spin-frames", &value);
+	if (m != 0) {
+		if (m < 0 || !parse_long(value, &n))
+			goto bad;
+		spin->frames = n;
+		set->frames = true;
+		return 1;
+	}
+	m = flag_value(argv, argc, i, "--spin-fps", &value);
+	if (m != 0) {
+		if (m < 0 || !parse_long(value, &n))
+			goto bad;
+		spin->fps = (int)n;
+		set->fps = true;
+		return 1;
+	}
+	return 0;
+bad:
+	fprintf(stderr, "shitfetch: invalid value for %s\n", flag);
+	return -1;
 }
 
 int
@@ -147,9 +346,13 @@ main(int argc, char **argv)
 	bool load_config = true;
 	char default_config[SHITFETCH_MAX_PATH];
 	char config_err[512];
+	struct shitfetch_spin spin_cli;
+	struct spin_flags spin_set;
 	int i;
 
 	shitfetch_settings_init(&settings);
+	spin_cli = settings.spin;
+	memset(&spin_set, 0, sizeof(spin_set));
 
 	for (i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -243,6 +446,14 @@ main(int argc, char **argv)
 			load_config = false;
 			continue;
 		}
+		if (strncmp(argv[i], "--spin", 6) == 0) {
+			int r = parse_spin_arg(argv, argc, &i, &spin_cli, &spin_set);
+
+			if (r < 0)
+				return 1;
+			if (r > 0)
+				continue;
+		}
 
 		fprintf(stderr, "shitfetch: unknown option: %s\n", argv[i]);
 		print_help(stderr);
@@ -272,10 +483,35 @@ main(int argc, char **argv)
 		snprintf(settings.logo, sizeof(settings.logo), "%s", requested_logo);
 		settings.show_logo = strcmp(settings.logo, "none") != 0;
 	}
+	if (spin_set.enabled)
+		settings.spin.enabled = spin_cli.enabled;
+	if (spin_set.axis)
+		settings.spin.axis = spin_cli.axis;
+	if (spin_set.light)
+		settings.spin.light = spin_cli.light;
+	if (spin_set.shade)
+		settings.spin.shade = spin_cli.shade;
+	if (spin_set.speed)
+		settings.spin.speed = spin_cli.speed;
+	if (spin_set.size)
+		settings.spin.size = spin_cli.size;
+	if (spin_set.depth)
+		settings.spin.depth = spin_cli.depth;
+	if (spin_set.height)
+		settings.spin.height = spin_cli.height;
+	if (spin_set.frames)
+		settings.spin.frames = spin_cli.frames;
+	if (spin_set.fps)
+		settings.spin.fps = spin_cli.fps;
+	if (spin_set.ramp)
+		snprintf(settings.spin.ramp, sizeof(settings.spin.ramp), "%s", spin_cli.ramp);
+	shitfetch_spin_clamp(&settings.spin);
 
 	shitfetch_collect_data(&settings, &data);
-	logo_count = shitfetch_load_logo(&settings, data.os_id, logo_lines, SHITFETCH_MAX_LOGO_LINES);
 	shitfetch_logo_main_color(&settings, data.os_id, key_color, sizeof(key_color));
+	if (settings.spin.enabled && settings.show_logo)
+		shitfetch_spin_run(&settings, &data, key_color);
+	logo_count = shitfetch_load_logo(&settings, data.os_id, logo_lines, SHITFETCH_MAX_LOGO_LINES);
 	info_count = shitfetch_build_info_lines(&settings, key_color, &data, info_lines, SHITFETCH_MAX_INFO_LINES);
 	shitfetch_render(&settings, logo_lines, logo_count, info_lines, info_count, key_color);
 

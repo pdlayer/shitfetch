@@ -1279,3 +1279,14 @@ shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfet
 	if (data->local_ip[0] == '\0')
 		snprintf(data->local_ip, sizeof(data->local_ip), "unknown");
 }
+
+/* Re-reads only the values that move while the spinning logo is on screen. A full
+   shitfetch_collect_data() would re-scan package managers and probe DRM every tick. */
+void
+shitfetch_refresh_live(const struct shitfetch_settings *settings, struct shitfetch_data *data)
+{
+	if (settings->module_enabled[SHITFETCH_MODULE_UPTIME])
+		detect_uptime(data->uptime, sizeof(data->uptime));
+	if (settings->module_enabled[SHITFETCH_MODULE_MEMORY] || settings->module_enabled[SHITFETCH_MODULE_SWAP])
+		detect_memory_swap(data->memory, sizeof(data->memory), data->swap, sizeof(data->swap));
+}

@@ -1,6 +1,0 @@
-complete -c shitfetch -s h -l help -d 'Show help'
-complete -c shitfetch -s v -l version -d 'Show version'
-complete -c shitfetch -s l -l logo -r -a 'auto none' -d 'Set logo'
-complete -c shitfetch -s t -l template -r -a 'default mini' -d 'Set template'
-complete -c shitfetch -s c -l config -r -F -d 'Load config file'
-complete -c shitfetch -l no-config -d 'Skip automatic config loading'

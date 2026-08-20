@@ -47,6 +47,9 @@ Array of objects. Full custom render layout.
 .TP
 .B disk
 Object. Disk output controls.
+.TP
+.B spin
+Object. Spinning 2.5D logo animation.
 .SH COLORS OBJECT
 Supported keys:
 .BR key ,
@@ -151,6 +154,66 @@ Boolean. Include filesystem type in disk output.
 .TP
 .B mounts
 Array of mount-point strings used as an allow-list.
+.SH SPIN OBJECT
+Every key mirrors a
+.B \-\-spin\-*
+command-line option, and the command line wins when both are present. Values
+outside the stated ranges are configuration errors, not silent clamps.
+.TP
+.B enabled
+Boolean. Runs the animation before the static output.
+.TP
+.B axis
+String.
+.BR x ,
+.BR y ,
+or
+.BR xy .
+.TP
+.B light
+String. One of
+.BR top\-left ,
+.BR top ,
+.BR top\-right ,
+.BR left ,
+.BR front ,
+.BR right ,
+.BR bottom\-left ,
+.BR bottom ,
+.BR bottom\-right .
+.TP
+.B shade
+String.
+.BR auto ,
+.BR ascii ,
+.BR braille ,
+or
+.BR blocks .
+.B auto
+picks the alphabet the logo art is already drawn with.
+.TP
+.B speed
+Number. Radians per second, 0.05 to 20.
+.TP
+.B size
+Number. Projection scale, 0.5 to 5.
+.TP
+.B depth
+Number. Relief thickness, 0.1 to 10, or 0 for automatic.
+.TP
+.B height
+Integer. Relief rows, 6 to 200, or 0 to fit the info panel and the logo.
+.TP
+.B frames
+Integer. Frame budget, or 0 to run until a key is pressed.
+.TP
+.B fps
+Integer. Target frame rate, 1 to 120.
+.TP
+.B chars
+String. Shading ramp from darkest to brightest, used by the
+.B ascii
+shading mode.
 .SH EXAMPLE
 .nf
 {
@@ -178,6 +241,14 @@ Array of mount-point strings used as an allow-list.
     "all": true,
     "showFs": true,
     "mounts": ["/", "/home"]
+  },
+  "spin": {
+    "enabled": false,
+    "axis": "xy",
+    "light": "top-left",
+    "shade": "auto",
+    "speed": 1,
+    "fps": 30
   }
 }
 .fi

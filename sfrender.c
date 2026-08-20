@@ -2,54 +2,12 @@
 
 #include "sf.h"
 #include "sfcolor.h"
+#include "sfutil.h"
 
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <unistd.h>
-#endif
-
-static void
-build_identity(char *user_out, size_t user_cap, char *host_out, size_t host_cap)
-{
-#ifdef _WIN32
-	const char *user = getenv("USERNAME");
-	DWORD host_size = (DWORD)host_cap;
-
-	if (user_cap == 0 || host_cap == 0)
-		return;
-	if (user == NULL || user[0] == '\0')
-		user = getenv("USER");
-	if (user == NULL || user[0] == '\0')
-		user = "user";
-	if (GetComputerNameA(host_out, &host_size) == 0)
-		snprintf(host_out, host_cap, "host");
-	snprintf(user_out, user_cap, "%s", user);
-#else
-	const char *user = getenv("USER");
-	char host[128];
-	char *dot;
-
-	if (user_cap == 0 || host_cap == 0)
-		return;
-	if (user == NULL || user[0] == '\0')
-		user = "user";
-	if (gethostname(host, sizeof(host)) != 0) {
-		snprintf(host, sizeof(host), "host");
-	} else {
-		host[sizeof(host) - 1] = '\0';
-		dot = strchr(host, '.');
-		if (dot != NULL)
-			*dot = '\0';
-	}
-	snprintf(user_out, user_cap, "%s", user);
-	snprintf(host_out, host_cap, "%s", host);
-#endif
-}
 
 static void
 format_value(char *out, size_t out_cap, const char *value, const char *value_color)
@@ -429,7 +387,7 @@ shitfetch_build_info_lines(const struct shitfetch_settings *settings, const char
 	if (settings->custom_color_spec[0] != '\0' &&
 		sfcolor_resolve(settings->custom_color_spec, key_color, custom_color_resolved, sizeof(custom_color_resolved)))
 		effective_custom_color = custom_color_resolved;
-	build_identity(identity_user, sizeof(identity_user), identity_host, sizeof(identity_host));
+	shitfetch_identity(identity_user, sizeof(identity_user), identity_host, sizeof(identity_host));
 
 	for (i = 0; i < settings->entry_count; i++) {
 		const char *entry_key_color = effective_key_color;
@@ -580,7 +538,7 @@ shitfetch_render(const struct shitfetch_settings *settings,
 	if (settings->border_color_spec[0] != '\0' &&
 		sfcolor_resolve(settings->border_color_spec, key_color, border_color, sizeof(border_color)))
 		effective_border_color = border_color;
-	build_identity(identity_user, sizeof(identity_user), identity_host, sizeof(identity_host));
+	shitfetch_identity(identity_user, sizeof(identity_user), identity_host, sizeof(identity_host));
 	dash_len = strlen(identity_user) + 1 + strlen(identity_host);
 	if (dash_len >= sizeof(dash))
 		dash_len = sizeof(dash) - 1;

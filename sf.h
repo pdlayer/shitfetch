@@ -10,6 +10,7 @@
 #define SHITFETCH_MAX_MODULES 32
 #define SHITFETCH_MAX_INFO_LINES 64
 #define SHITFETCH_MAX_LOGO_LINES 256
+#define SHITFETCH_MAX_LOGO_COLS 256
 #define SHITFETCH_MAX_DISKS 32
 #define SHITFETCH_MAX_GPUS 8
 #define SHITFETCH_MAX_DISK_FILTERS 16
@@ -53,6 +54,50 @@ enum shitfetch_template {
 	SHITFETCH_TEMPLATE_MINI,
 };
 
+enum shitfetch_spin_axis {
+	SHITFETCH_SPIN_AXIS_X = 1,
+	SHITFETCH_SPIN_AXIS_Y = 2,
+	SHITFETCH_SPIN_AXIS_XY = 3,
+};
+
+enum shitfetch_spin_light {
+	SHITFETCH_SPIN_LIGHT_TOP_LEFT,
+	SHITFETCH_SPIN_LIGHT_TOP,
+	SHITFETCH_SPIN_LIGHT_TOP_RIGHT,
+	SHITFETCH_SPIN_LIGHT_LEFT,
+	SHITFETCH_SPIN_LIGHT_FRONT,
+	SHITFETCH_SPIN_LIGHT_RIGHT,
+	SHITFETCH_SPIN_LIGHT_BOTTOM_LEFT,
+	SHITFETCH_SPIN_LIGHT_BOTTOM,
+	SHITFETCH_SPIN_LIGHT_BOTTOM_RIGHT,
+};
+
+/* Shading target. ascii writes one ramp character per cell; braille and blocks rasterize a
+   2x4 and a 2x2 subpixel grid per cell instead, trading the ramp for dithered coverage.
+   auto picks one from the alphabet the logo itself is drawn with. */
+enum shitfetch_spin_shade {
+	SHITFETCH_SPIN_SHADE_AUTO,
+	SHITFETCH_SPIN_SHADE_ASCII,
+	SHITFETCH_SPIN_SHADE_BRAILLE,
+	SHITFETCH_SPIN_SHADE_BLOCKS,
+};
+
+#define SHITFETCH_SPIN_RAMP_DEFAULT ".,-~:;=!*#$@"
+
+struct shitfetch_spin {
+	bool enabled;
+	enum shitfetch_spin_axis axis;
+	enum shitfetch_spin_light light;
+	enum shitfetch_spin_shade shade;
+	float speed;
+	float size;
+	float depth;
+	int height;
+	long frames;
+	int fps;
+	char ramp[64];
+};
+
 struct shitfetch_settings {
 	enum shitfetch_template template;
 	bool show_logo;
@@ -89,6 +134,7 @@ struct shitfetch_settings {
 	char disk_mount_filter[SHITFETCH_MAX_DISK_FILTERS][SHITFETCH_MAX_PATH];
 	size_t disk_mount_filter_count;
 	char ascii_dir[SHITFETCH_MAX_PATH];
+	struct shitfetch_spin spin;
 };
 
 struct shitfetch_info_line {
@@ -98,6 +144,20 @@ struct shitfetch_info_line {
 struct shitfetch_logo_line {
 	char text[SHITFETCH_MAX_LINE * 2];
 	size_t visible_len;
+};
+
+/* One terminal cell of a logo, kept as a codepoint so the 2.5D relief can weigh
+   glyphs by visual density instead of by byte. */
+struct shitfetch_logo_cell {
+	unsigned int cp;
+	unsigned char color_idx;
+};
+
+struct shitfetch_logo_grid {
+	struct shitfetch_logo_cell *cells;
+	size_t rows;
+	size_t cols;
+	char palette[9][32];
 };
 
 struct shitfetch_data {
@@ -133,9 +193,13 @@ void shitfetch_settings_apply_template(struct shitfetch_settings *settings,
 	enum shitfetch_template template);
 
 void shitfetch_collect_data(const struct shitfetch_settings *settings, struct shitfetch_data *data);
+void shitfetch_refresh_live(const struct shitfetch_settings *settings, struct shitfetch_data *data);
 
 size_t shitfetch_load_logo(const struct shitfetch_settings *settings, const char *os_id,
 	struct shitfetch_logo_line *lines, size_t cap);
+int shitfetch_load_logo_grid(const struct shitfetch_settings *settings, const char *os_id,
+	struct shitfetch_logo_grid *out);
+void shitfetch_logo_grid_free(struct shitfetch_logo_grid *grid);
 void shitfetch_logo_main_color(const struct shitfetch_settings *settings, const char *os_id,
 	char *out, size_t out_cap);
 

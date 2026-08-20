@@ -25,6 +25,7 @@ OBJ = \
 	$(BUILD_DIR)/sf.o \
 	$(BUILD_DIR)/sfdetect.o \
 	$(BUILD_DIR)/sfdetectpkgs.o \
+	$(BUILD_DIR)/sfdetectrpm.o \
 	$(BUILD_DIR)/sfdetectgpu.o \
 	$(BUILD_DIR)/sfdetectdisk.o \
 	$(BUILD_DIR)/sfdetectdisplay.o \
@@ -33,7 +34,8 @@ OBJ = \
 	$(BUILD_DIR)/sfconfig.o \
 	$(BUILD_DIR)/sfutil.o \
 	$(BUILD_DIR)/sfansi.o \
-	$(BUILD_DIR)/sfcolor.o
+	$(BUILD_DIR)/sfcolor.o \
+	$(BUILD_DIR)/sfspin.o
 
 CPPFLAGS += -DSHITFETCH_ASCII_DIR='"/usr/local/share/shitfetch/ascii"'
 CFLAGS += -std=$(CSTD) -Wall -Wextra -Wpedantic -Wno-trigraphs -Wno-format-truncation
@@ -52,6 +54,10 @@ $(OBJ): $(BUILD_DIR)/%.o: %.c sf.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/sflogo.o: sfascii.h sfminiascii.h sfansi.h sfcolor.h
+
+$(BUILD_DIR)/sfspin.o: sfspin.h sfcolor.h sfutil.h
+
+$(BUILD_DIR)/sf.o: sfspin.h sfconfig.h sfutil.h
 
 clean:
 	$(RM_RF_BUILD)

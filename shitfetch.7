@@ -18,6 +18,11 @@ Language-specific package managers such as
 and
 .B pip
 are intentionally excluded.
+.IP \(bu 2
+The
+.B \-\-spin
+animation is computed per frame from the logo's glyph densities; no frames are
+stored in the binary.
 .SH OUTPUT CONVENTIONS
 The
 .B packages
@@ -62,6 +67,10 @@ includes ASCII artwork derived from or adapted from artwork used by
 and
 .BR pfetch .
 Those projects are appreciated here specifically for that artwork lineage.
+.PP
+The idea of rendering the logo as a spinning 2.5D relief comes from
+.BR areofyl/fetch .
+The implementation here is independent.
 .SH LICENSE
 .B shitfetch
 is distributed under the BSD 3-Clause Clear License.

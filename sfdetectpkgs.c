@@ -3,6 +3,7 @@
 
 #include "sfdetect.h"
 #include "sfdetectpkgs.h"
+#include "sfdetectrpm.h"
 #include "sfutil.h"
 
 #include <stdio.h>
@@ -959,6 +960,7 @@ struct package_spec {
 static const struct package_spec package_specs[] = {
 	{"pacman", count_pacman_local, count_pacman_local_path, "var/lib/pacman/local"},
 	{"dpkg", count_dpkg_status, count_dpkg_status_file, "var/lib/dpkg/status"},
+	{"rpm", shitfetch_count_rpm, shitfetch_count_rpm_dir, "var/lib/rpm"},
 	{"apk", count_apk_installed, count_apk_installed_path, "lib/apk/db/installed"},
 	{"xbps", count_xbps_db, count_xbps_db_path, "var/db/xbps"},
 	{"pkgtools", count_pkgtools, count_pkgtools_path, "var/log/packages"},
@@ -986,6 +988,7 @@ static const struct package_spec package_specs[] = {
 static const struct package_spec bedrock_package_specs[] = {
 	{"pacman", count_pacman_local, count_pacman_local_path, "var/lib/pacman/local"},
 	{"dpkg", count_dpkg_status, count_dpkg_status_file, "var/lib/dpkg/status"},
+	{"rpm", shitfetch_count_rpm, shitfetch_count_rpm_dir, "var/lib/rpm"},
 	{"apk", count_apk_installed, count_apk_installed_path, "lib/apk/db/installed"},
 	{"xbps", count_xbps_db, count_xbps_db_path, "var/db/xbps"},
 	{"pkgtools", count_pkgtools, count_pkgtools_path, "var/log/packages"},

@@ -1,8 +1,8 @@
 build/
 pkg/
+src/
 *.o
 *.deb
 *.pkg.tar.zst
 *.tar.gz
-backup-*.tgz
-description-pak
+

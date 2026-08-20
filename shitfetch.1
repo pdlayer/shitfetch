@@ -51,6 +51,102 @@ Equivalent to
 .TP
 .B \-\-no\-config
 Disable automatic configuration lookup.
+.TP
+.BI \-\-spin [= AXIS ]
+Animate the logo as a spinning 2.5D relief before printing the static output.
+.I AXIS
+is
+.BR x ,
+.BR y ,
+or
+.B xy
+(default). The animation needs a terminal on both standard input and standard
+output; otherwise it is skipped silently.
+.TP
+.BI \-\-spin\-speed " N"
+Rotation rate in radians per second, 0.05 to 20. Default 1.
+.TP
+.BI \-\-spin\-size " N"
+Projection scale, 0.5 to 5. Default 1, which maps one source cell onto one
+terminal cell. Larger values grow the relief until it runs out of terminal.
+.TP
+.BI \-\-spin\-depth " N"
+Relief thickness, 0.1 to 10. The default 0 derives the thickness from the
+variance of the logo's glyph density, so flat single-glyph art still gets a
+solid body.
+.TP
+.BI \-\-spin\-height " N"
+Relief height in rows, 6 to 200. The default 0 takes the taller of the info
+panel and the logo's own height, capped by the terminal.
+.TP
+.BI \-\-spin\-frames " N"
+Stop after
+.I N
+frames. The default 0 runs until a key is pressed.
+.TP
+.BI \-\-spin\-fps " N"
+Target frame rate, 1 to 120. Default 30.
+.TP
+.BI \-\-spin\-light " DIR"
+Light direction:
+.BR top\-left " (default), " top ", " top\-right ", " left ", " front ", " right ", "
+.BR bottom\-left ", " bottom ", or " bottom\-right .
+.TP
+.BI \-\-spin\-shade " MODE"
+Glyph alphabet the relief is drawn with:
+.BR auto " (default), " ascii ", " braille ", or " blocks .
+.B ascii
+writes one character of the shading ramp per cell.
+.B braille
+and
+.B blocks
+rasterize a 2x4 and a 2x2 subpixel grid inside each cell instead. A cell the
+relief only partly covers becomes the glyph for exactly those subpixels, so an
+edge lands on a fraction of a cell rather than snapping to the character grid; a
+fully covered cell carries brightness instead, as one of the four shade blocks
+in
+.B blocks
+mode and as dot density in
+.BR braille .
+.B auto
+reads what the logo art itself is made of: braille art gets
+.BR braille ,
+block\-element art gets
+.BR blocks ,
+and everything else gets
+.BR ascii .
+.TP
+.BI \-\-spin\-chars " STR"
+Shading ramp from darkest to brightest, used by the
+.B ascii
+shading mode. Default
+.BR .,\-~:;=!*#$@ .
+.SH SPIN
+.B \-\-spin
+extrudes the logo along Z by the visual ink weight of each glyph, rotates the
+resulting point cloud, and shades it per frame; nothing is pre-rendered. The
+info panel stays in its usual place on the right, with
+.BR uptime ,
+.BR memory ,
+and
+.B swap
+refreshed once per second. The relief is given only as many columns as the
+rotating logo needs, so the panel sits where the static layout puts it, and the
+.B colors
+swatches follow the panel just as they do in static output.
+.PP
+The animation is drawn in place, in the same rows a normal run would occupy, so
+nothing above it is cleared and the scrollback is left intact. Those rows are
+erased and the cursor and terminal mode are restored on a keypress,
+.BR SIGINT ,
+.BR SIGTERM ,
+or
+.BR SIGHUP .
+The static output is printed afterwards either way, which makes
+.B \-\-spin
+usable as a shell startup fetch. A logo of
+.B none
+disables it.
 .SH CONFIGURATION
 If automatic configuration loading is enabled,
 .B shitfetch

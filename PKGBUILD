@@ -1,23 +1,101 @@
 pkgname=shitfetch
-pkgver=0.1.0
+pkgver=0.1.0.r16.gefaa5ba
 pkgrel=1
 pkgdesc='minimal linux fetch'
 arch=('x86_64')
 url='https://github.com/pdlayer/shitfetch'
 license=('BSD-3-Clause-Clear')
 depends=('libdrm')
-makedepends=('pkgconf')
-source=()
-sha256sums=()
+makedepends=('clang' 'pkgconf')
+source=(
+	'LICENSE'
+	'Makefile'
+	'config.mk'
+	'sf.c'
+	'sf.h'
+	'sfansi.c'
+	'sfansi.h'
+	'sfascii.h'
+	'sfcolor.c'
+	'sfcolor.h'
+	'sfconfig.c'
+	'sfconfig.h'
+	'sfdetect.c'
+	'sfdetect.h'
+	'sfdetectdisk.c'
+	'sfdetectdisk.h'
+	'sfdetectdisplay.c'
+	'sfdetectdisplay.h'
+	'sfdetectgpu.c'
+	'sfdetectgpu.h'
+	'sfdetectpkgs.c'
+	'sfdetectpkgs.h'
+	'sfdetectrpm.c'
+	'sfdetectrpm.h'
+	'sflogo.c'
+	'sfminiascii.h'
+	'sfrender.c'
+	'sfspin.c'
+	'sfspin.h'
+	'sfutil.c'
+	'sfutil.h'
+	'shitfetch.1'
+	'shitfetch.5'
+	'shitfetch.7'
+	'shitfetch.bash'
+	'shitfetch.fish'
+	'shitfetch.zsh'
+)
+b2sums=('e788ee96fa6dd09b3c6e1c726a9e53fe8332523f3e7a6fcbdc0e4884ec45e2bb51faaef8e68fda8115c65036bbf9e617cf68012165c1d3d2293ef670d83915c8'
+        'b74b320cf784ac484e0330f6fce63a54642817715483354d2494ebde0d1cb2aa758056a1c584511675dd6832b4f5ba04e972fcb9f537eaa6123a9d96beae087a'
+        '6a5aacbce16ec7aa46cf2c12bd09811d43f2bdedb0e2b32e50cf83147aa0ca905c31304132d9266837818fcc732f9fa55931feec694a0f788927fa61ba4db7ac'
+        'd7d2a0ae3b42dd80691ef11e6e305eedb722dfa8acd1783fbcacb3e2383d3cc1fa69ef7e9206e9170693a2ebe3ce7dabd56b38dcca8e8e76c467f21518ab2f27'
+        '7cfc913a4355d34a16475efef46a841a45617bbe52ad19cb652626ae623535a050d40d8902475554f70049d4797bd97f7a78bd34036d84994806988d534a285a'
+        '4b4a1e6e355453f8ab77a9d206eac1acdfdcc00738c9067be0202ad0e15e417290f3652dc09a7e214a11af475a53fe9a1cecf2a589f28c1c69ccc780c49a1f6e'
+        'd740ea681cb6f38e289f9e9369744607d5b2e0d36ffa28bacfd42e8eb6ee70fe4715eb741a7f1beff5c4cc9f8525df20bf355fcad7b5c386e684c08e9dcd7dd5'
+        '2f21d797ff5f6bb84dfc49cfce4b19fb21a5bdb9f6b719363b4fccb81d1b6817332c61d001abdd06774341d16e55d199f69e82e15c8344d553adff03b8f3fe12'
+        'fa37aa61a8d3eebc2faa8412b002015c494303e3d651f239f9c287aba48f0a11b54dd7888f1a4f9ee93bc503b6a7c2db8454ddd051cdd4096d82f7d9cfe5e5c2'
+        'aa41228a1b06245c88a1062c6de0f2b0eb02836b5b1ec3b9dc60d6d6fcce6a4ef28dca57ffadb52e98102a6a414744386efeb36279eb0e10e104477c9db4351f'
+        '9af4d023dc89eaf611b2fad3dbf7dc651f7a1e227e266f2471c59e1509cda2acbf400a04f78f758c207f5073dc3a3909371225e007cb5d969668e9bc6153fdc4'
+        '6ca042f2cc08dc3e957a74ddfd574b83db218a7a0eafe6efcbbc8026f21916501c39945dc52b5546320466775ba0479bf30939eeb1e91a0e3bca75bc4b302ad5'
+        'a5fdc9b6dd1e541b43b165d73648880ed67fc7361dd9eebf5d98ef814b0ed2d3239880db5f930ab80b9a0f57eff80ddf7192634d8f5e6a69c86930d6bff5b16a'
+        '81416d989bf3593dd141f90c6df5045ab3aa114dc19623506bf7a5af0a45950010b305d14ce0c6a4102dea8237a7a1ea7577a1115c412abdffc862f5574799f9'
+        '3d01708d9c1cb4c0432e1f43f1972f4660a405c88d3f8e298e756e455ff668b8161de5216f8d6c6cf8abe29cffcf26facf7b87284a305f3b07d3c208398334eb'
+        '60dddadf5da84d970598942686cbff95e10d789523e2b5607eb12a032c65d40ab3beb75efd5263dd9e5fdf334ef1558d34ba749cb76ebce8df2d0b738b4897a4'
+        '13070c9f53e4e2ade85a093d8033d0b2de0f21f1f7b0b1ae9c7028c87609df9ec82598b51594cdb1e480e79483849bbfc0c6524e000514fff66247e77d5b57ee'
+        '49ecdb9658cd350147fdfbd62e23708e6b534495f5b336878d39789a7fd8cc22317e8990f81e64b526a4a9ed835542cdd89a346be4b4c3f74e95efa5161ee82a'
+        '7e39437ad2768b32761c341993464522a610cb34127cb8983e89e9c48c8867cffcb43e4a771c0b4da6fe37b80337d5e7f2958bc993f6b1335a543688e942112e'
+        'b01cf8b7f3297cfdce2abe9e5bec230f4e4f454f69911dd239bf2a74273e41beb0453b27cf042dc4ae4e27ed25004205361dd5d9dd37080e9adb8bc2d9404fe2'
+        'eb106cabcf5e7fc3c90e023b1fd5632f57313d2d088215ccd08654a00d77f111cea8dd9382de67fd5b76b77b6a14595f87fcc02c09ca6ae18828ff26f28b6d9c'
+        '8b91f013138009c037ea1ebf7c2d0a33563d9b298be34f46f98dc65764fb41975bef71699b821b1607c35e759cd6db52da9086c86718ea928fada90d3543d54b'
+        '3fce582981f8d2871659a703232db8a853707301e7a1e95addabf377915404d708304959e29abe36e7c26e0408c25d0dd38a6e0dac9ff9e0393dc729e282daca'
+        '5446b910ff77346f4442726e253ee413cf0cb951f69e43224ada31359044b3b4635b9f9cd6eaadc0045f56a46916440f4b5c99096dc64429013e4701e2789a93'
+        '536fa0df554870e47347e28ff59e835103241ec5cf78b5df05027acbcc83e6eb220d105cd022b55894fdf06aef236f663150d96692ebed768defb9a03c5ad682'
+        '5c9b1d92ad05af5db0ec76f3226c870e43012ed43fc2ad0d179392411211cd473758126c968a89df062c94411af2e74dc6c33bdad4e507b37ce391031f8135c1'
+        '1fe234c7984bec56703fd810298233b2fdce228376dd8bf0b72a2984917f057eb8bb2878f3776198f703862e1ead356a64254317e15a286485e8042fb3cf2fb9'
+        'b6c779c0e448c96c2165d2c6957fe92604a925ab6ddd5b66ceababeb2d06fc82a6831212e315c7ddcc3a186d289cd17afc855b7292b33d8024ea635e488c7b68'
+        '5b1958597c596243c122d255c1e84b099b7f2e9d4e304a9cb936be464239e4c9c450ae52284cda641e22da92cb41e3c59984ab0a3fd0b0ddcb3987768c586cfe'
+        'c629633a6fffd9ae6bb95d26c954259a9d15c165229f80988ebd0223a1dea2c3e11123fdb76349b886eb17c8b7be8788bba4e7696322e59099df18dfa4eb2486'
+        '562c9c170649a83bf233609eb3395875462608185711e38c9d102087ccf1b0456426b8ef84d050ab53f2746159f4a7a8aa1b6c256a95bf780cbc803f46464b80'
+        '72ea2ed3c18d1e15762ffe81f9e508c8dfb75e00ab8545dea0b31e0ff3be03ee9da06cfe05de5c27c0e349dc41fd0c5d77395a88e6931b53af534abb53e327a3'
+        '369cce0e33fbbb7f3752f04e0a864e15a73853734255f9761f528a0c1db671e05453062bbc492e61fa1d23ce7028c6813a40395678384bd990c1d5e8c9ffddd2'
+        '1bd5a4465de5a995209a648465cfffff1d2fd431a4220bd95c9831bd0265af511d1876fa205538247fa4f085f0930f9c4b7013f5391b80633ade337004355b83'
+        'a5052adc1f19e4dc838ed1978055d0427af27ec5f4ecf97746e9fd02c384ebb3f7a2f9a4a7e87511907d8f44a9ebfd8d7da058f774d38cfbe6be69446208879c'
+        '20ed1bb2eebed52243b222683f2b2b09a1f39f57d3819c7e8a970754fd54e4d8d33847dc452b6c0cf231163fdf226a86afeffdcf4010a233281fa0c3ecbc00c7'
+        '54c45a20b13337f2b4e4d1ef974e2f897c96dfa955ff7f7f4670e95356c4206ed52dbb7f052ebcd0cec0f2fcdc8b090ad936124688d3968852e3ba6d37814c8a')
 
 build() {
-	make -C "$startdir"
+	cd "$srcdir"
+	# Command-line CPPFLAGS overrides the Makefile's /usr/local default, which would
+	# otherwise leave the installed binary looking for its ascii directory outside PREFIX.
+	make CPPFLAGS="-DSHITFETCH_ASCII_DIR='\"/usr/share/shitfetch/ascii\"'"
 }
 
 package() {
-	make -C "$startdir" DESTDIR="$pkgdir" PREFIX=/usr install
-	install -Dm644 "$startdir/shitfetch.bash" "$pkgdir/usr/share/bash-completion/completions/shitfetch"
-	install -Dm644 "$startdir/shitfetch.fish" "$pkgdir/usr/share/fish/vendor_completions.d/shitfetch.fish"
-	install -Dm644 "$startdir/shitfetch.zsh" "$pkgdir/usr/share/zsh/site-functions/_shitfetch"
-	install -Dm644 "$startdir/LICENSE" "$pkgdir/usr/share/licenses/shitfetch/LICENSE"
+	cd "$srcdir"
+	make DESTDIR="$pkgdir" PREFIX=/usr install
+	install -Dm644 shitfetch.bash "$pkgdir/usr/share/bash-completion/completions/shitfetch"
+	install -Dm644 shitfetch.fish "$pkgdir/usr/share/fish/vendor_completions.d/shitfetch.fish"
+	install -Dm644 shitfetch.zsh "$pkgdir/usr/share/zsh/site-functions/_shitfetch"
+	install -Dm644 LICENSE "$pkgdir/usr/share/licenses/shitfetch/LICENSE"
 }

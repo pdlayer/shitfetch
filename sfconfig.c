@@ -3,11 +3,13 @@
 #include "sfconfig.h"
 
 #include "sfcolor.h"
+#include "sfspin.h"
 #include "sfutil.h"
 
 #include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -912,6 +914,24 @@ expect_bool(const struct json_value *value, const char *field, const char *path,
 	return 0;
 }
 
+/* JSON_NUMBER keeps the literal as text, so the range check happens here rather than in
+   the parser. */
+static int
+expect_number(const struct json_value *value, const char *field, const char *path,
+	char *err, size_t err_cap, double *out)
+{
+	char *end = NULL;
+	double v;
+
+	if (value == NULL || value->type != JSON_NUMBER)
+		return config_error(err, err_cap, path, "'%s' must be a number", field);
+	v = strtod(value->as.number, &end);
+	if (end == NULL || *end != '\0')
+		return config_error(err, err_cap, path, "'%s' is not a valid number", field);
+	*out = v;
+	return 0;
+}
+
 static bool
 color_valid(const char *spec, bool allow_empty)
 {
@@ -1269,6 +1289,108 @@ apply_disk(struct shitfetch_settings *settings, const struct json_value *value,
 }
 
 static int
+apply_spin(struct shitfetch_settings *settings, const struct json_value *value,
+	const char *path, char *err, size_t err_cap)
+{
+	static const struct {
+		const char *key;
+		const char *field;
+		size_t offset;
+		enum { SPIN_NUM_FLOAT, SPIN_NUM_INT, SPIN_NUM_LONG } kind;
+		double lo;
+		double hi;
+	} numbers[] = {
+		{"speed", "spin.speed", offsetof(struct shitfetch_spin, speed), SPIN_NUM_FLOAT, 0.05, 20.0},
+		{"size", "spin.size", offsetof(struct shitfetch_spin, size), SPIN_NUM_FLOAT, 0.5, 5.0},
+		{"depth", "spin.depth", offsetof(struct shitfetch_spin, depth), SPIN_NUM_FLOAT, 0.0, 10.0},
+		{"height", "spin.height", offsetof(struct shitfetch_spin, height), SPIN_NUM_INT, 0.0, 200.0},
+		{"frames", "spin.frames", offsetof(struct shitfetch_spin, frames), SPIN_NUM_LONG, 0.0, 1e9},
+		{"fps", "spin.fps", offsetof(struct shitfetch_spin, fps), SPIN_NUM_INT, 1.0, 120.0},
+	};
+	const char *const allowed[] = {
+		"enabled", "axis", "light", "shade", "speed", "size", "depth", "height",
+		"frames", "fps", "chars", NULL
+	};
+	const struct json_value *field;
+	const char *s;
+	size_t i;
+	double n;
+	bool b;
+
+	if (value->type != JSON_OBJECT)
+		return config_error(err, err_cap, path, "'spin' must be an object");
+	if (validate_keys(value, allowed, "spin", path, err, err_cap) < 0)
+		return -1;
+
+	field = object_get(value, "enabled");
+	if (field != NULL) {
+		if (expect_bool(field, "spin.enabled", path, err, err_cap, &b) < 0)
+			return -1;
+		settings->spin.enabled = b;
+	}
+	field = object_get(value, "axis");
+	if (field != NULL) {
+		if (expect_string(field, "spin.axis", path, err, err_cap, &s) < 0)
+			return -1;
+		if (!shitfetch_spin_parse_axis(s, &settings->spin.axis))
+			return config_error(err, err_cap, path, "unknown spin axis '%s'", s);
+	}
+	field = object_get(value, "light");
+	if (field != NULL) {
+		if (expect_string(field, "spin.light", path, err, err_cap, &s) < 0)
+			return -1;
+		if (!shitfetch_spin_parse_light(s, &settings->spin.light))
+			return config_error(err, err_cap, path, "unknown spin light '%s'", s);
+	}
+	field = object_get(value, "shade");
+	if (field != NULL) {
+		if (expect_string(field, "spin.shade", path, err, err_cap, &s) < 0)
+			return -1;
+		if (!shitfetch_spin_parse_shade(s, &settings->spin.shade))
+			return config_error(err, err_cap, path, "unknown spin shade '%s'", s);
+	}
+	field = object_get(value, "chars");
+	if (field != NULL) {
+		if (expect_string(field, "spin.chars", path, err, err_cap, &s) < 0)
+			return -1;
+		if (s[0] == '\0')
+			return config_error(err, err_cap, path, "'spin.chars' must not be empty");
+		if (copy_string_field(settings->spin.ramp, sizeof(settings->spin.ramp), s,
+			"spin.chars", path, err, err_cap) < 0)
+			return -1;
+	}
+	for (i = 0; i < sizeof(numbers) / sizeof(numbers[0]); i++) {
+		char *slot = (char *)&settings->spin + numbers[i].offset;
+
+		field = object_get(value, numbers[i].key);
+		if (field == NULL)
+			continue;
+		if (expect_number(field, numbers[i].field, path, err, err_cap, &n) < 0)
+			return -1;
+		if (n < numbers[i].lo || n > numbers[i].hi)
+			return config_error(err, err_cap, path, "'%s' must be between %g and %g",
+				numbers[i].field, numbers[i].lo, numbers[i].hi);
+		if (numbers[i].kind != SPIN_NUM_FLOAT && n != (double)(long)n)
+			return config_error(err, err_cap, path, "'%s' must be a whole number",
+				numbers[i].field);
+		if (numbers[i].kind == SPIN_NUM_FLOAT) {
+			float f = (float)n;
+
+			memcpy(slot, &f, sizeof(f));
+		} else if (numbers[i].kind == SPIN_NUM_INT) {
+			int v = (int)n;
+
+			memcpy(slot, &v, sizeof(v));
+		} else {
+			long v = (long)n;
+
+			memcpy(slot, &v, sizeof(v));
+		}
+	}
+	return 0;
+}
+
+static int
 entry_selector_count(const struct json_value *object)
 {
 	int count = 0;
@@ -1506,7 +1628,7 @@ shitfetch_load_config(struct shitfetch_settings *settings, const char *path,
 {
 	static const char *const top_allowed[] = {
 		"template", "logo", "header", "ansi", "separator", "asciiDir",
-		"colors", "modules", "entries", "disk", NULL
+		"colors", "modules", "entries", "disk", "spin", NULL
 	};
 	char *buf = NULL;
 	size_t len = 0;
@@ -1579,6 +1701,10 @@ shitfetch_load_config(struct shitfetch_settings *settings, const char *path,
 		goto fail;
 	field = object_get(root, "disk");
 	if (field != NULL && apply_disk(settings, field, path, err, err_cap) < 0)
+		goto fail;
+
+	field = object_get(root, "spin");
+	if (field != NULL && apply_spin(settings, field, path, err, err_cap) < 0)
 		goto fail;
 
 	modules_present = object_get(root, "modules") != NULL;
