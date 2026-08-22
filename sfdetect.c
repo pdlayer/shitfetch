@@ -566,7 +566,8 @@ read_os_release_fields(const char *path, char *id, size_t id_cap, char *name, si
 		key = line;
 		value = eq + 1;
 		len = strlen(value);
-		if (len >= 2 && value[0] == '"' && value[len - 1] == '"') {
+		if (len >= 2 && (value[0] == '"' || value[0] == '\'') &&
+		    value[len - 1] == value[0]) {
 			value[len - 1] = '\0';
 			value++;
 		}
@@ -688,6 +689,13 @@ is_generic_init_name(const char *name)
 }
 
 static bool
+openrc_is_running(void)
+{
+	return shitfetch_file_exists("/run/openrc/softlevel") ||
+		shitfetch_file_exists("/sbin/openrc-run");
+}
+
+static bool
 normalize_init_name(const char *name, char *out, size_t cap)
 {
 	size_t i;
@@ -788,10 +796,15 @@ detect_init(char *out, size_t cap)
 		return;
 	}
 
-	if (generic[0] != '\0')
+	if (generic[0] != '\0') {
+		if (openrc_is_running()) {
+			snprintf(out, cap, "OpenRC");
+			return;
+		}
 		snprintf(out, cap, "%s", generic);
-	else
-		snprintf(out, cap, "unknown");
+		return;
+	}
+	snprintf(out, cap, "unknown");
 }
 
 static void
